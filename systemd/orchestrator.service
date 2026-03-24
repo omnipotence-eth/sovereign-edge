@@ -1,0 +1,18 @@
+[Unit]
+Description=Sovereign Edge Orchestrator
+After=ollama.service network.target
+Requires=ollama.service
+
+[Service]
+Type=exec
+User=john
+WorkingDirectory=/home/john/sovereign-edge
+EnvironmentFile=/home/john/sovereign-edge/.env
+ExecStart=/home/john/sovereign-edge/.venv/bin/python -m agents.orchestrator
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=ai-stack.target

@@ -1,0 +1,13 @@
+[project]
+name = "sovereign-edge-llm"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "litellm>=1.44,<2.0",
+    "tenacity>=8.5,<9.0",
+    "sovereign-edge-core",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

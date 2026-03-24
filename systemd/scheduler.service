@@ -1,0 +1,17 @@
+[Unit]
+Description=Sovereign Edge Proactive Scheduler (APScheduler)
+After=orchestrator.service
+
+[Service]
+Type=exec
+User=john
+WorkingDirectory=/home/john/sovereign-edge
+EnvironmentFile=/home/john/sovereign-edge/.env
+ExecStart=/home/john/sovereign-edge/.venv/bin/python -m agents.orchestrator.scheduler
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=ai-stack.target

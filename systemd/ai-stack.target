@@ -1,0 +1,7 @@
+[Unit]
+Description=Sovereign Edge AI Stack
+Requires=ollama.service orchestrator.service telegram-bot.service scheduler.service
+After=ollama.service orchestrator.service telegram-bot.service scheduler.service
+
+[Install]
+WantedBy=multi-user.target

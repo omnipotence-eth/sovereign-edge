@@ -1,0 +1,81 @@
+version: '3'
+
+vars:
+  STACK_TARGET: ai-stack.target
+
+tasks:
+  start:
+    desc: Start all AI services
+    cmds:
+      - sudo systemctl start {{.STACK_TARGET}}
+      - sudo systemctl status {{.STACK_TARGET}}
+
+  stop:
+    desc: Stop all AI services
+    cmds:
+      - sudo systemctl stop {{.STACK_TARGET}}
+
+  restart:
+    desc: Restart all AI services
+    cmds:
+      - sudo systemctl restart {{.STACK_TARGET}}
+
+  status:
+    desc: Show status of all services
+    cmds:
+      - sudo systemctl status ollama orchestrator telegram-bot scheduler
+
+  monitor:
+    desc: Live resource monitor (requires jtop)
+    cmds:
+      - jtop
+
+  logs:
+    desc: Tail all service logs
+    cmds:
+      - journalctl -f -u orchestrator -u telegram-bot -u scheduler
+
+  backup:
+    desc: Backup LanceDB and SQLite to /ssd/backups/
+    cmds:
+      - mkdir -p /ssd/backups
+      - tar -czf /ssd/backups/data-$(date +%Y%m%d-%H%M%S).tar.gz data/ --exclude='data/models'
+      - echo "Backup complete."
+
+  lint:
+    desc: Run ruff linter across workspace
+    cmds:
+      - uv run ruff check . --fix
+      - uv run ruff format .
+
+  typecheck:
+    desc: Run mypy across all packages
+    cmds:
+      - uv run mypy packages/ agents/ services/
+
+  test:
+    desc: Run all tests
+    cmds:
+      - uv run pytest tests/ packages/ agents/ services/ -v
+
+  eval:
+    desc: Run eval harness
+    cmds:
+      - uv run python evals/harness.py
+
+  train-router:
+    desc: Fine-tune and export ONNX intent router
+    cmds:
+      - uv run python scripts/generate-synth-data.py
+      - uv run python scripts/train-router.py
+
+  secrets-edit:
+    desc: Edit encrypted secrets with SOPS
+    cmds:
+      - sops secrets/env.enc.yaml
+
+  secrets-decrypt:
+    desc: Decrypt secrets to .env (dev only — never commit)
+    cmds:
+      - sops -d secrets/env.enc.yaml > .env
+      - echo "WARNING: .env written — do not commit"

@@ -1,0 +1,20 @@
+[Unit]
+Description=Ollama Local LLM Server
+After=network.target
+Documentation=https://ollama.com
+
+[Service]
+Type=exec
+User=ollama
+Group=ollama
+ExecStart=/usr/local/bin/ollama serve
+Restart=always
+RestartSec=5
+EnvironmentFile=/etc/environment
+
+# Resource limits — protect against VRAM OOM
+MemoryMax=2G
+CPUQuota=80%
+
+[Install]
+WantedBy=multi-user.target

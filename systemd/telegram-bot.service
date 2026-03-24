@@ -1,0 +1,17 @@
+[Unit]
+Description=Sovereign Edge Telegram Bot Interface
+After=orchestrator.service network.target
+
+[Service]
+Type=exec
+User=john
+WorkingDirectory=/home/john/sovereign-edge
+EnvironmentFile=/home/john/sovereign-edge/.env
+ExecStart=/home/john/sovereign-edge/.venv/bin/python -m services.telegram
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=ai-stack.target

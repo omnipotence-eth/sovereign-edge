@@ -1,0 +1,27 @@
+name: Nightly Evals
+
+on:
+  schedule:
+    - cron: '0 3 * * *'  # 3 AM UTC nightly
+  workflow_dispatch:
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.11"
+      - run: uv sync --all-extras
+      - name: Run eval harness
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: uv run python evals/harness.py --output-json evals/results/nightly-$(date +%Y%m%d).json
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: evals/results/
+          retention-days: 30

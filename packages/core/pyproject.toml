@@ -1,0 +1,14 @@
+[project]
+name = "sovereign-edge-core"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.7,<3.0",
+    "pydantic-settings>=2.3,<3.0",
+    "structlog>=24.1,<25.0",
+    "python-dotenv>=1.0,<2.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

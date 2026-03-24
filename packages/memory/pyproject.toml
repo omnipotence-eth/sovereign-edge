@@ -1,0 +1,13 @@
+[project]
+name = "sovereign-edge-memory"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "mem0ai>=0.1,<1.0",
+    "lancedb>=0.10,<1.0",
+    "sovereign-edge-core",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -1,0 +1,14 @@
+[project]
+name = "sovereign-edge-observability"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "structlog>=24.1,<25.0",
+    "opentelemetry-sdk>=1.27,<2.0",
+    "opentelemetry-exporter-otlp>=1.27,<2.0",
+    "sovereign-edge-core",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

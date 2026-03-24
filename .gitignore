@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# uv
+uv.lock
+.uv/
+
+# Secrets (never commit plaintext)
+.env
+.env.*
+!.env.example
+secrets/*.yaml
+!secrets/.sops.yaml
+
+# Models (large binaries)
+*.onnx
+*.gguf
+*.safetensors
+data/models/
+data/stepbible/
+data/tsk/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+desktop.ini
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
