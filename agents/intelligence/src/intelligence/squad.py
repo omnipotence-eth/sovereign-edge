@@ -41,9 +41,13 @@ class IntelligenceSquad(BaseSquad):
         t0 = time.monotonic()
 
         result = await gateway.complete(
-            prompt=task.content,
-            system=_SYSTEM_PROMPT,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": task.content},
+            ],
             max_tokens=2048,
+            routing=task.routing,
+            squad=self.name,
         )
 
         return TaskResult(
@@ -63,8 +67,10 @@ class IntelligenceSquad(BaseSquad):
 
         gateway = LLMGateway()
         result = await gateway.complete(
-            prompt=_MORNING_PROMPT,
-            system=_SYSTEM_PROMPT,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": _MORNING_PROMPT},
+            ],
             max_tokens=300,
         )
         return result["content"]

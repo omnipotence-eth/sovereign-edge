@@ -31,9 +31,13 @@ class SpiritualSquad(BaseSquad):
         t0 = time.monotonic()
 
         result = await gateway.complete(
-            prompt=task.content,
-            system=_SYSTEM_PROMPT,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": task.content},
+            ],
             max_tokens=1024,
+            routing=task.routing,
+            squad=self.name,
         )
 
         return TaskResult(
@@ -53,11 +57,13 @@ class SpiritualSquad(BaseSquad):
 
         gateway = LLMGateway()
         result = await gateway.complete(
-            prompt=(
-                "Generate a brief morning devotional for today: a single scripture verse "
-                "with 2–3 sentences of reflection and a one-sentence prayer."
-            ),
-            system=_SYSTEM_PROMPT,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": (
+                    "Generate a brief morning devotional for today: a single scripture verse "
+                    "with 2–3 sentences of reflection and a one-sentence prayer."
+                )},
+            ],
             max_tokens=300,
         )
         return result["content"]
