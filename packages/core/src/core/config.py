@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     cerebras_api_key: str = ""
     mistral_api_key: str = ""
     telegram_bot_token: str = ""
+    telegram_owner_chat_id: str = ""
     alpha_vantage_key: str = ""
     jina_api_key: str = ""
 

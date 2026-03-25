@@ -209,7 +209,7 @@ class Orchestrator:
 # ---------------------------------------------------------------------- #
 
 async def run() -> None:
-    setup_logging(debug=get_settings().debug)
+    setup_logging(debug=get_settings().debug_mode)
     orchestrator = Orchestrator()
 
     # Graceful shutdown on SIGINT / SIGTERM

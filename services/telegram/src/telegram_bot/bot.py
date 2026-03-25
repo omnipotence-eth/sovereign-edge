@@ -208,7 +208,7 @@ def _split(text: str, size: int) -> list[str]:
 # ---------------------------------------------------------------------- #
 
 async def _run() -> None:
-    setup_logging(debug=get_settings().debug)
+    setup_logging(debug=get_settings().debug_mode)
     from career.squad import CareerSquad
     from creative.squad import CreativeSquad
     from intelligence.squad import IntelligenceSquad
