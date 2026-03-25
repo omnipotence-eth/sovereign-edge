@@ -177,7 +177,10 @@ class SovereignEdgeBot:
 
         # Telegram has a 4096-char limit per message
         for chunk in _split(reply, 4000):
-            await update.message.reply_text(chunk, parse_mode="Markdown")
+            try:
+                await update.message.reply_text(chunk, parse_mode="Markdown")
+            except Exception:
+                await update.message.reply_text(chunk)
 
         logger.info(
             "message_handled",
