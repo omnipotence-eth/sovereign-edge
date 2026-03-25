@@ -2,20 +2,24 @@
 Sovereign Edge Telegram bot — primary user interface.
 
 Accepts text messages, routes them through the orchestrator, and
-returns responses.  Only the owner chat ID is authorised.
+returns responses. Only the owner chat ID is authorised.
 
 Commands:
   /start   — greeting
   /health  — squad health status
-  /status  — current model + usage stats
+  /stats   — today's usage and cost stats (TraceStore)
+  /status  — current squad + routing info
   /squads  — list registered squads
 """
+
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+import functools
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
-from core.config import get_settings
+from core.config import get_settings, log_startup_warnings
 from core.types import TaskPriority, TaskRequest
 from observability.logging import get_logger, setup_logging
 from router.classifier import IntentRouter
@@ -37,24 +41,32 @@ logger = get_logger(__name__, component="telegram")
 _WELCOME = (
     "👁️ *Sovereign Edge online.*\n\n"
     "Send any message and I'll route it to the right squad.\n"
-    "Use /health to check system status."
+    "Use /health to check system status.\n"
+    "Use /stats to see today's usage."
 )
 
 
-def _auth(func):
+def _auth(func: Callable[..., Any]) -> Callable[..., Any]:
     """Decorator — reject requests from anyone but the owner."""
-    async def wrapper(self: SovereignEdgeBot, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+
+    @functools.wraps(func)
+    async def wrapper(
+        self: SovereignEdgeBot, update: Update, ctx: ContextTypes.DEFAULT_TYPE
+    ) -> None:
         if update.effective_user is None or update.effective_chat is None:
             return
         if str(update.effective_chat.id) != str(self._settings.telegram_owner_chat_id):
-            await update.message.reply_text("⛔ Unauthorised.")
+            # Guard: message may be None for callback queries / channel posts
+            if update.message is not None:
+                await update.message.reply_text("⛔ Unauthorised.")
             logger.warning(
                 "unauthorised_request",
                 chat_id=update.effective_chat.id,
-                user=update.effective_user.username,
+                user=getattr(update.effective_user, "username", "unknown"),
             )
             return
-        return await func(self, update, ctx)
+        await func(self, update, ctx)
+
     return wrapper
 
 
@@ -77,19 +89,14 @@ class SovereignEdgeBot:
             logger.warning("telegram_token_missing — bot disabled")
             return
 
-        self._app = (
-            Application.builder()
-            .token(token)
-            .build()
-        )
+        self._app = Application.builder().token(token).build()
 
-        self._app.add_handler(CommandHandler("start",   self._cmd_start))
-        self._app.add_handler(CommandHandler("health",  self._cmd_health))
-        self._app.add_handler(CommandHandler("status",  self._cmd_status))
-        self._app.add_handler(CommandHandler("squads",  self._cmd_squads))
-        self._app.add_handler(
-            MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_message)
-        )
+        self._app.add_handler(CommandHandler("start", self._cmd_start))
+        self._app.add_handler(CommandHandler("health", self._cmd_health))
+        self._app.add_handler(CommandHandler("stats", self._cmd_stats))
+        self._app.add_handler(CommandHandler("status", self._cmd_status))
+        self._app.add_handler(CommandHandler("squads", self._cmd_squads))
+        self._app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_message))
 
         await self._app.initialize()
         await self._app.start()
@@ -104,13 +111,24 @@ class SovereignEdgeBot:
             logger.info("telegram_bot_stopped")
 
     async def send_message(self, text: str) -> None:
-        """Push a proactive message to the owner (used by morning digest)."""
-        if self._app and self._settings.telegram_owner_chat_id:
+        """Push a proactive message to the owner (used by morning briefs)."""
+        if not (self._app and self._settings.telegram_owner_chat_id):
+            return
+        try:
             await self._app.bot.send_message(
                 chat_id=self._settings.telegram_owner_chat_id,
                 text=text,
                 parse_mode="Markdown",
             )
+        except Exception:
+            logger.warning("telegram_markdown_failed — retrying as plain text")
+            try:
+                await self._app.bot.send_message(
+                    chat_id=self._settings.telegram_owner_chat_id,
+                    text=text,
+                )
+            except Exception:
+                logger.error("telegram_send_failed", exc_info=True)
 
     # ------------------------------------------------------------------ #
     # Commands                                                             #
@@ -124,26 +142,45 @@ class SovereignEdgeBot:
     async def _cmd_health(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("🔍 Checking squads…")
         health = await self._orchestrator.health_check_all()
-        lines = [
-            f"{'✅' if ok else '❌'} *{name}*"
-            for name, ok in sorted(health.items())
-        ]
+        lines = [f"{'✅' if ok else '❌'} *{name}*" for name, ok in sorted(health.items())]
         text = "🏥 *Squad Health*\n\n" + "\n".join(lines) if lines else "No squads registered."
         await update.message.reply_text(text, parse_mode="Markdown")
 
     @_auth
-    async def _cmd_status(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        registered = list(self._orchestrator._squads.keys())
+    async def _cmd_stats(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Today's LLM usage stats from TraceStore."""
+        stats = self._orchestrator.get_daily_stats()
+        if not stats:
+            await update.message.reply_text("No stats recorded today yet.")
+            return
+
+        avg_ms = stats.get("avg_latency_ms", 0.0)
         text = (
-            f"⚡ *Sovereign Edge Status*\n\n"
-            f"Squads: {len(registered)}\n"
-            f"Registered: {', '.join(registered) or 'none'}"
+            "📊 *Today's Stats*\n\n"
+            f"Requests: {stats.get('total_requests', 0)}\n"
+            f"Cache hits: {stats.get('cache_hits', 0)}\n"
+            f"Errors: {stats.get('errors', 0)}\n"
+            f"Avg latency: {avg_ms:.0f}ms\n"
+            f"Tokens in: {stats.get('total_tokens_in', 0):,}\n"
+            f"Tokens out: {stats.get('total_tokens_out', 0):,}\n"
+            f"Total cost: ${stats.get('total_cost_usd', 0.0):.4f}\n"
+            f"Models: {stats.get('models_used') or 'none'}"
+        )
+        await update.message.reply_text(text, parse_mode="Markdown")
+
+    @_auth
+    async def _cmd_status(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        names = self._orchestrator.squad_names  # public property — no private access
+        text = (
+            "⚡ *Sovereign Edge Status*\n\n"
+            f"Squads: {len(names)}\n"
+            f"Registered: {', '.join(names) or 'none'}"
         )
         await update.message.reply_text(text, parse_mode="Markdown")
 
     @_auth
     async def _cmd_squads(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        names = sorted(self._orchestrator._squads.keys())
+        names = self._orchestrator.squad_names  # public property — no private access
         text = "🤖 *Registered Squads*\n\n" + "\n".join(f"• {n}" for n in names)
         await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -157,23 +194,31 @@ class SovereignEdgeBot:
         if not user_text:
             return
 
-        await update.message.reply_text("⏳ Routing…")
+        chat_id = str(update.effective_chat.id)
+        tg_chat_id = update.effective_chat.id
 
-        intent, confidence, routing = self._router.route(user_text)
+        intent, confidence, routing = await self._router.aroute(user_text)
 
         request = TaskRequest(
             content=user_text,
             intent=intent,
             priority=TaskPriority.HIGH,
             routing=routing,
+            context={"chat_id": chat_id},
         )
 
+        # Typing indicator refreshes every 4 s while the LLM processes
+        stop_typing = asyncio.Event()
+        typing_task = asyncio.create_task(_keep_typing(ctx.bot, tg_chat_id, stop_typing))
         try:
             result = await self._orchestrator.dispatch(request)
             reply = result.content
         except Exception:
             logger.error("dispatch_failed", exc_info=True)
             reply = "⚠️ Something went wrong. Please try again."
+        finally:
+            stop_typing.set()
+            await asyncio.gather(typing_task, return_exceptions=True)
 
         # Telegram has a 4096-char limit per message
         for chunk in _split(reply, 4000):
@@ -191,6 +236,16 @@ class SovereignEdgeBot:
         )
 
 
+async def _keep_typing(bot: Any, chat_id: int, stop: asyncio.Event) -> None:  # noqa: ANN401
+    """Refresh the typing indicator every 4 s until *stop* is set."""
+    while not stop.is_set():
+        try:
+            await bot.send_chat_action(chat_id=chat_id, action="typing")
+        except Exception:
+            logger.debug("typing_action_failed", exc_info=True)
+        await asyncio.sleep(4)
+
+
 def _split(text: str, size: int) -> list[str]:
     """Split long text into chunks without breaking mid-word."""
     if len(text) <= size:
@@ -202,7 +257,7 @@ def _split(text: str, size: int) -> list[str]:
         if split_at > 0 and len(text) > size:
             chunk = text[:split_at]
         chunks.append(chunk.strip())
-        text = text[len(chunk):].strip()
+        text = text[len(chunk) :].strip()
     return chunks
 
 
@@ -210,8 +265,11 @@ def _split(text: str, size: int) -> list[str]:
 # Standalone entry point (runs bot + orchestrator together)               #
 # ---------------------------------------------------------------------- #
 
+
 async def _run() -> None:
     setup_logging(debug=get_settings().debug_mode)
+    log_startup_warnings()
+
     from career.squad import CareerSquad
     from creative.squad import CreativeSquad
     from intelligence.squad import IntelligenceSquad
@@ -223,6 +281,9 @@ async def _run() -> None:
         orch.register(squad)
 
     bot = SovereignEdgeBot(orch)
+
+    # Wire morning brief delivery so the scheduler can push to Telegram
+    orch.register_send_fn(bot.send_message)
 
     await asyncio.gather(orch.start(), bot.start())
 

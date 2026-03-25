@@ -14,7 +14,8 @@ EnvironmentFile=-/home/omnipotence/sovereign-edge/secrets/.env.decrypted
 
 # Decrypt secrets — must use bash so the > redirect works
 ExecStartPre=/bin/bash -c \
-    'sops --decrypt --output-type dotenv /home/omnipotence/sovereign-edge/secrets/env.yaml \
+    'sops --decrypt /home/omnipotence/sovereign-edge/secrets/env.yaml \
+     | sed "s/: /=/" \
      > /home/omnipotence/sovereign-edge/secrets/.env.decrypted \
      && chmod 600 /home/omnipotence/sovereign-edge/secrets/.env.decrypted'
 

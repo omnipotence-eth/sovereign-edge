@@ -1,4 +1,5 @@
 """Base interface that all agent squads must implement."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

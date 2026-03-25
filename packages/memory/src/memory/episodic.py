@@ -4,6 +4,7 @@ Episodic memory via Mem0 — extracts and stores long-term facts.
 Uses Ollama for the LLM calls required by Mem0's extraction pipeline.
 Stores memories locally (no cloud dependency for memory operations).
 """
+
 from __future__ import annotations
 
 import logging
@@ -29,23 +30,25 @@ class EpisodicMemory:
         try:
             from mem0 import Memory
 
-            self._memory = Memory.from_config({
-                "llm": {
-                    "provider": "ollama",
-                    "config": {
-                        "model": settings.local_llm_model,
-                        "ollama_base_url": settings.ollama_host,
+            self._memory = Memory.from_config(
+                {
+                    "llm": {
+                        "provider": "ollama",
+                        "config": {
+                            "model": settings.local_llm_model,
+                            "ollama_base_url": settings.ollama_host,
+                        },
                     },
-                },
-                "embedder": {
-                    "provider": "ollama",
-                    "config": {
-                        "model": settings.embedding_model,
-                        "ollama_base_url": settings.ollama_host,
+                    "embedder": {
+                        "provider": "ollama",
+                        "config": {
+                            "model": settings.embedding_model,
+                            "ollama_base_url": settings.ollama_host,
+                        },
                     },
-                },
-                "version": "v1.1",
-            })
+                    "version": "v1.1",
+                }
+            )
             self._available = True
             logger.info("Mem0 episodic memory initialized")
         except Exception as e:

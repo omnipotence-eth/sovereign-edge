@@ -3,6 +3,7 @@ structlog configuration — ~5MB RAM, JSON output.
 
 Every log line includes: timestamp, level, squad, model, trace_id.
 """
+
 from __future__ import annotations
 
 import structlog

@@ -86,7 +86,7 @@ tasks:
   deploy:
     desc: "Sync repo to Jetson and restart service"
     vars:
-      JETSON: "sovereign-edge"   # Tailscale hostname
+      JETSON: "100.68.102.98"   # Tailscale IP
       REMOTE: "~/sovereign-edge"
     cmds:
       - |

@@ -7,6 +7,7 @@ dependencies = [
     "sovereign-edge-llm",
     "sovereign-edge-memory",
     "sovereign-edge-observability",
+    "sovereign-edge-search",
 ]
 
 [tool.uv.sources]
@@ -14,6 +15,7 @@ sovereign-edge-core = { workspace = true }
 sovereign-edge-llm = { workspace = true }
 sovereign-edge-memory = { workspace = true }
 sovereign-edge-observability = { workspace = true }
+sovereign-edge-search = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/spiritual"]

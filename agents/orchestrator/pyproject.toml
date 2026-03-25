@@ -5,6 +5,7 @@ requires-python = ">=3.11"
 dependencies = [
     "sovereign-edge-core",
     "sovereign-edge-llm",
+    "sovereign-edge-memory",
     "sovereign-edge-observability",
     "apscheduler>=3.10,<4.0",
     "pydantic-ai>=0.0.14,<1.0",
@@ -13,6 +14,7 @@ dependencies = [
 [tool.uv.sources]
 sovereign-edge-core = { workspace = true }
 sovereign-edge-llm = { workspace = true }
+sovereign-edge-memory = { workspace = true }
 sovereign-edge-observability = { workspace = true }
 
 [tool.hatch.build.targets.wheel]

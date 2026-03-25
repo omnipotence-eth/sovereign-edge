@@ -1,4 +1,5 @@
 """Sovereign Edge core types and configuration."""
+
 from core.config import Settings, get_settings
 from core.squad import BaseSquad
 from core.types import (

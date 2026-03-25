@@ -1,4 +1,5 @@
 """Regex-based PII detection. Zero ML overhead, ~0MB RAM."""
+
 from __future__ import annotations
 
 import re

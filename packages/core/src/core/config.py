@@ -1,21 +1,25 @@
 """Application configuration loaded from environment variables."""
+
 from __future__ import annotations
 
+import logging
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic_settings import BaseSettings
 
+logger = logging.getLogger(__name__)
+
 
 class Settings(BaseSettings):
     """Global settings. Load from environment or .env file."""
 
-    # Paths
-    project_root: Path = Path("/home/jetson/sovereign-edge")
-    ssd_root: Path = Path("/ssd/sovereign-edge")
-    lancedb_path: Path = Path("/ssd/sovereign-edge/lancedb")
-    logs_path: Path = Path("/ssd/sovereign-edge/logs")
-    models_path: Path = Path("/ssd/sovereign-edge/models")
+    # Paths — override via SE_LOGS_PATH etc. if an SSD is available
+    project_root: Path = Path("/home/omnipotence/sovereign-edge")
+    ssd_root: Path = Path("/home/omnipotence/sovereign-edge/data")
+    lancedb_path: Path = Path("/home/omnipotence/sovereign-edge/data/lancedb")
+    logs_path: Path = Path("/home/omnipotence/sovereign-edge/data/logs")
+    models_path: Path = Path("/home/omnipotence/sovereign-edge/data/models")
 
     # Ollama
     ollama_host: str = "http://127.0.0.1:11434"
@@ -32,7 +36,7 @@ class Settings(BaseSettings):
     alpha_vantage_key: str = ""
     jina_api_key: str = ""
 
-    # Cloud API Rate Limits (requests per minute)
+    # Cloud API Rate Limits (requests per minute) — tune per deployment
     groq_rpm: int = 30
     gemini_rpm: int = 15
     cerebras_rpm: int = 30
@@ -55,3 +59,39 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Singleton settings instance."""
     return Settings()
+
+
+def log_startup_warnings() -> None:
+    """Emit warnings for any missing API keys so the operator knows at boot time."""
+    s = get_settings()
+
+    cloud_keys = {
+        "SE_GROQ_API_KEY": s.groq_api_key,
+        "SE_GOOGLE_API_KEY": s.google_api_key,
+        "SE_CEREBRAS_API_KEY": s.cerebras_api_key,
+        "SE_MISTRAL_API_KEY": s.mistral_api_key,
+    }
+    required_keys = {
+        "SE_TELEGRAM_BOT_TOKEN": s.telegram_bot_token,
+        "SE_TELEGRAM_OWNER_CHAT_ID": s.telegram_owner_chat_id,
+    }
+
+    for key, value in required_keys.items():
+        if not value:
+            logger.error("startup_missing_required key=%s — bot will not function", key)
+
+    missing_cloud = [k for k, v in cloud_keys.items() if not v]
+    for key in missing_cloud:
+        logger.warning("startup_missing_cloud_key key=%s — provider skipped", key)
+
+    if len(missing_cloud) == len(cloud_keys):
+        logger.warning(
+            "startup_no_cloud_providers — all requests will use local Ollama (%s)",
+            s.local_llm_model,
+        )
+
+    if not s.jina_api_key:
+        logger.info(
+            "startup_no_jina_key — web search limited to ~200 RPD free tier; "
+            "set SE_JINA_API_KEY for unlimited"
+        )

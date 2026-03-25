@@ -1,7 +1,8 @@
 """Shared types used across all packages and agents."""
+
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import UUID, uuid4
 
@@ -33,9 +34,9 @@ class TaskPriority(StrEnum):
     """Priority levels for the inference queue."""
 
     CRITICAL = "P0"  # HITL response, security alert
-    HIGH = "P1"      # Director orchestration, morning digest
-    NORMAL = "P2"    # Squad worker tasks
-    LOW = "P3"       # Content generation, non-urgent
+    HIGH = "P1"  # Director orchestration, morning digest
+    NORMAL = "P2"  # Squad worker tasks
+    LOW = "P3"  # Content generation, non-urgent
 
 
 class RoutingDecision(StrEnum):
@@ -56,7 +57,7 @@ class TaskRequest(BaseModel):
     priority: TaskPriority = TaskPriority.NORMAL
     squad: SquadName = SquadName.GENERAL
     context: dict[str, str] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     pii_detected: bool = False
 
 
@@ -73,5 +74,5 @@ class TaskResult(BaseModel):
     latency_ms: float = 0.0
     cost_usd: float = 0.0
     cached: bool = False
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     metadata: dict[str, str] = Field(default_factory=dict)

@@ -2,13 +2,15 @@
 SQLite trace store — queryable log of all LLM interactions.
 
 Schema designed for cost tracking, latency analysis, and squad performance monitoring.
-~10MB storage per 10K traces with rotation.
+WAL mode enabled for concurrent read/write without blocking.
+~10MB storage per 10K traces.
 """
+
 from __future__ import annotations
 
 import logging
 import sqlite3
-from datetime import datetime
+from datetime import UTC, datetime
 
 from core.config import get_settings
 from core.types import TaskResult
@@ -17,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class TraceStore:
-    """Persistent trace storage in SQLite."""
+    """Persistent trace storage in SQLite with WAL mode."""
 
     def __init__(self) -> None:
         settings = get_settings()
@@ -25,8 +27,12 @@ class TraceStore:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        # WAL mode: allows concurrent readers + one writer without blocking
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA synchronous=NORMAL")  # safe + fast with WAL
+        self.conn.execute("PRAGMA cache_size=-8000")  # 8MB page cache
         self._create_tables()
-        logger.info("Trace store initialized at %s", db_path)
+        logger.info("trace_store_initialized path=%s", db_path)
 
     def _create_tables(self) -> None:
         self.conn.executescript("""
@@ -41,6 +47,7 @@ class TraceStore:
                 latency_ms REAL DEFAULT 0.0,
                 cost_usd REAL DEFAULT 0.0,
                 cached INTEGER DEFAULT 0,
+                routing TEXT DEFAULT 'CLOUD',
                 status TEXT DEFAULT 'success',
                 error_message TEXT DEFAULT ''
             );
@@ -48,6 +55,7 @@ class TraceStore:
             CREATE INDEX IF NOT EXISTS idx_traces_squad ON traces(squad);
             CREATE INDEX IF NOT EXISTS idx_traces_timestamp ON traces(timestamp);
             CREATE INDEX IF NOT EXISTS idx_traces_model ON traces(model);
+            CREATE INDEX IF NOT EXISTS idx_traces_status ON traces(status);
 
             CREATE TABLE IF NOT EXISTS daily_summary (
                 date TEXT PRIMARY KEY,
@@ -62,32 +70,36 @@ class TraceStore:
         self.conn.commit()
 
     def record(self, result: TaskResult, status: str = "success", error: str = "") -> None:
-        """Record a completed task result."""
-        self.conn.execute(
-            """INSERT INTO traces
-               (task_id, timestamp, squad, model, tokens_in, tokens_out,
-                latency_ms, cost_usd, cached, status, error_message)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                str(result.task_id),
-                datetime.utcnow().isoformat(),
-                result.squad,
-                result.model_used,
-                result.tokens_in,
-                result.tokens_out,
-                result.latency_ms,
-                result.cost_usd,
-                1 if result.cached else 0,
-                status,
-                error,
-            ),
-        )
-        self.conn.commit()
+        """Record a completed task result. Safe to call from async context (fast SQLite write)."""
+        try:
+            self.conn.execute(
+                """INSERT INTO traces
+                   (task_id, timestamp, squad, model, tokens_in, tokens_out,
+                    latency_ms, cost_usd, cached, routing, status, error_message)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    str(result.task_id),
+                    datetime.now(UTC).isoformat(),
+                    result.squad,
+                    result.model_used,
+                    result.tokens_in,
+                    result.tokens_out,
+                    result.latency_ms,
+                    result.cost_usd,
+                    1 if result.cached else 0,
+                    result.routing,
+                    status,
+                    error,
+                ),
+            )
+            self.conn.commit()
+        except sqlite3.Error:
+            logger.error("trace_record_failed task_id=%s", result.task_id, exc_info=True)
 
     def get_daily_stats(self, date_str: str | None = None) -> dict:
-        """Get aggregated stats for a day."""
+        """Get aggregated stats for a day (defaults to today UTC)."""
         if date_str is None:
-            date_str = datetime.utcnow().strftime("%Y-%m-%d")
+            date_str = datetime.now(UTC).strftime("%Y-%m-%d")
 
         row = self.conn.execute(
             """SELECT
@@ -96,7 +108,9 @@ class TraceStore:
                  COALESCE(SUM(tokens_out), 0) as total_tokens_out,
                  COALESCE(SUM(cost_usd), 0) as total_cost_usd,
                  COALESCE(SUM(cached), 0) as cache_hits,
-                 COALESCE(SUM(CASE WHEN status='error' THEN 1 ELSE 0 END), 0) as errors
+                 COALESCE(SUM(CASE WHEN status='error' THEN 1 ELSE 0 END), 0) as errors,
+                 COALESCE(AVG(latency_ms), 0) as avg_latency_ms,
+                 GROUP_CONCAT(DISTINCT model) as models_used
                FROM traces
                WHERE date(timestamp) = ?""",
             (date_str,),
@@ -109,14 +123,31 @@ class TraceStore:
         rows = self.conn.execute(
             """SELECT date(timestamp) as date,
                       COUNT(*) as requests,
-                      COALESCE(SUM(tokens_out), 0) as tokens,
-                      COALESCE(AVG(latency_ms), 0) as avg_latency_ms
+                      COALESCE(SUM(tokens_out), 0) as tokens_out,
+                      COALESCE(AVG(latency_ms), 0) as avg_latency_ms,
+                      COALESCE(SUM(CASE WHEN status='error' THEN 1 ELSE 0 END), 0) as errors
                FROM traces
                WHERE squad = ?
                  AND timestamp >= datetime('now', ?)
                GROUP BY date(timestamp)
                ORDER BY date(timestamp)""",
             (squad, f"-{days} days"),
+        ).fetchall()
+
+        return [dict(r) for r in rows]
+
+    def get_model_breakdown(self, days: int = 1) -> list[dict]:
+        """Which models are being hit and how often."""
+        rows = self.conn.execute(
+            """SELECT model,
+                      COUNT(*) as requests,
+                      COALESCE(SUM(tokens_in + tokens_out), 0) as total_tokens,
+                      COALESCE(AVG(latency_ms), 0) as avg_latency_ms
+               FROM traces
+               WHERE timestamp >= datetime('now', ?)
+               GROUP BY model
+               ORDER BY requests DESC""",
+            (f"-{days} days",),
         ).fetchall()
 
         return [dict(r) for r in rows]

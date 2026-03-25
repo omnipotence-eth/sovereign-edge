@@ -4,6 +4,7 @@ LanceDB vector store — embedded, disk-based, ~100MB RAM.
 Provides domain-specific tables for each squad plus a shared personal table.
 Uses Qwen3-Embedding-0.6B via Ollama for embeddings.
 """
+
 from __future__ import annotations
 
 import logging
@@ -37,7 +38,7 @@ class VectorStore:
       - personal: Journal entries, preferences, life context
     """
 
-    TABLES = ["bible", "career", "research", "content", "personal"]
+    TABLES: list[str] = ["bible", "career", "research", "content", "personal"]  # noqa: RUF012
 
     def __init__(self) -> None:
         settings = get_settings()
@@ -107,11 +108,7 @@ class VectorStore:
 
         table = self.db.open_table(table_name)
         try:
-            results = (
-                table.search(query, query_type="hybrid")
-                .limit(limit)
-                .to_list()
-            )
+            results = table.search(query, query_type="hybrid").limit(limit).to_list()
             return results  # type: ignore[return-value]
         except Exception:
             # Fall back to pure semantic if FTS index doesn't exist

@@ -4,6 +4,7 @@ version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
     "sovereign-edge-core",
+    "sovereign-edge-memory",
     "onnxruntime>=1.19,<2.0",
     "transformers>=4.48,<5.0",
     "numpy>=1.26,<3.0",
@@ -11,6 +12,7 @@ dependencies = [
 
 [tool.uv.sources]
 sovereign-edge-core = { workspace = true }
+sovereign-edge-memory = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/router"]
