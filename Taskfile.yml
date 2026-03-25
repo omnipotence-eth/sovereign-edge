@@ -1,0 +1,122 @@
+version: "3"
+
+# Sovereign Edge task runner
+# Install: sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b ~/.local/bin
+# Run:     task <task-name>
+
+vars:
+  VENV: ".venv"
+  PYTHON: "{{.VENV}}/bin/python"
+  SERVICE: "telegram-bot"
+  SOPS_FILE: "secrets/env.yaml"
+  DECRYPTED: "secrets/.env.decrypted"
+
+tasks:
+
+  # ------------------------------------------------------------------ #
+  # Development                                                          #
+  # ------------------------------------------------------------------ #
+
+  install:
+    desc: "Install all workspace packages in editable mode"
+    cmds:
+      - uv sync --all-packages
+
+  lint:
+    desc: "Ruff check + format"
+    cmds:
+      - "{{.VENV}}/bin/ruff check . --fix"
+      - "{{.VENV}}/bin/ruff format ."
+
+  typecheck:
+    desc: "Run ty (mypy fallback)"
+    cmds:
+      - cmd: "{{.VENV}}/bin/ty check ."
+        ignore_error: false
+
+  test:
+    desc: "Run pytest"
+    cmds:
+      - "{{.VENV}}/bin/pytest -q"
+
+  audit:
+    desc: "CVE scan"
+    cmds:
+      - "{{.VENV}}/bin/pip-audit"
+
+  secrets-decrypt:
+    desc: "Decrypt env.yaml → .env.decrypted (needed before running locally)"
+    cmds:
+      - sops --decrypt {{.SOPS_FILE}} > {{.DECRYPTED}}
+      - chmod 600 {{.DECRYPTED}}
+
+  # ------------------------------------------------------------------ #
+  # Service control (Jetson systemd)                                    #
+  # ------------------------------------------------------------------ #
+
+  start:
+    desc: "Start the AI stack"
+    cmds:
+      - sudo systemctl start ai-stack.target
+
+  stop:
+    desc: "Stop the AI stack"
+    cmds:
+      - sudo systemctl stop ai-stack.target
+
+  restart:
+    desc: "Restart the telegram bot service"
+    cmds:
+      - sudo systemctl restart {{.SERVICE}}
+
+  status:
+    desc: "Show service status"
+    cmds:
+      - sudo systemctl status {{.SERVICE}} --no-pager
+
+  logs:
+    desc: "Tail live logs"
+    cmds:
+      - journalctl -u {{.SERVICE}} -f --no-pager
+
+  # ------------------------------------------------------------------ #
+  # Deployment (desktop → Jetson)                                       #
+  # ------------------------------------------------------------------ #
+
+  deploy:
+    desc: "Sync repo to Jetson and restart service"
+    vars:
+      JETSON: "sovereign-edge"   # Tailscale hostname
+      REMOTE: "~/sovereign-edge"
+    cmds:
+      - |
+        rsync -avz --exclude='.venv/' --exclude='__pycache__/' \
+          --exclude='*.pyc' --exclude='.git/' \
+          . omnipotence@{{.JETSON}}:{{.REMOTE}}/
+      - ssh omnipotence@{{.JETSON}} "cd {{.REMOTE}} && uv sync --all-packages"
+      - ssh omnipotence@{{.JETSON}} "sudo systemctl restart {{.SERVICE}}"
+
+  # ------------------------------------------------------------------ #
+  # Ollama model management                                             #
+  # ------------------------------------------------------------------ #
+
+  models:
+    desc: "List Ollama models on Jetson"
+    cmds:
+      - ollama list
+
+  pull-models:
+    desc: "Pull required Ollama models"
+    cmds:
+      - ollama pull qwen3-embedding:0.6b
+      - ollama pull qwen3:0.6b
+
+  # ------------------------------------------------------------------ #
+  # Health checks                                                       #
+  # ------------------------------------------------------------------ #
+
+  health:
+    desc: "Quick health check — Ollama + systemd service"
+    cmds:
+      - curl -s http://localhost:11434/api/tags | python3 -c "import sys,json; d=json.load(sys.stdin); print('Ollama models:', [m['name'] for m in d.get('models',[])])"
+      - sudo systemctl is-active {{.SERVICE}} && echo "Service: running" || echo "Service: stopped"

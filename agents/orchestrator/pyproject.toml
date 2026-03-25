@@ -1,0 +1,20 @@
+[project]
+name = "sovereign-edge-orchestrator"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "sovereign-edge-core",
+    "sovereign-edge-llm",
+    "sovereign-edge-observability",
+    "apscheduler>=3.10,<4.0",
+    "pydantic-ai>=0.0.14,<1.0",
+]
+
+[tool.uv.sources]
+sovereign-edge-core = { workspace = true }
+sovereign-edge-llm = { workspace = true }
+sovereign-edge-observability = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -1,0 +1,23 @@
+[project]
+name = "sovereign-edge-telegram"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "sovereign-edge-core",
+    "sovereign-edge-llm",
+    "sovereign-edge-memory",
+    "sovereign-edge-observability",
+    "sovereign-edge-router",
+    "python-telegram-bot>=21.0,<22.0",
+]
+
+[tool.uv.sources]
+sovereign-edge-core = { workspace = true }
+sovereign-edge-llm = { workspace = true }
+sovereign-edge-memory = { workspace = true }
+sovereign-edge-observability = { workspace = true }
+sovereign-edge-router = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

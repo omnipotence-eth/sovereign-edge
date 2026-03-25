@@ -1,0 +1,40 @@
+[Unit]
+Description=Sovereign Edge Telegram Bot
+Documentation=https://github.com/omnipotence-eth/sovereign-edge
+After=network-online.target ollama.service
+Wants=network-online.target
+PartOf=ai-stack.target
+
+[Service]
+Type=simple
+User=omnipotence
+WorkingDirectory=/ssd/sovereign-edge
+EnvironmentFile=-/ssd/sovereign-edge/secrets/.env.decrypted
+
+# Load secrets from SOPS-encrypted file at startup
+ExecStartPre=/usr/bin/sops --decrypt \
+    /home/omnipotence/sovereign-edge/secrets/env.yaml \
+    > /ssd/sovereign-edge/secrets/.env.decrypted
+ExecStartPrePermissions=0600
+
+ExecStart=/ssd/sovereign-edge/.venv/bin/python -m telegram_bot.bot
+ExecStop=/bin/kill -TERM $MAINPID
+
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sovereign-edge-telegram
+
+# Resource limits — be a good citizen on 8 GB Jetson
+MemoryMax=2G
+CPUQuota=80%
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/ssd/sovereign-edge
+
+[Install]
+WantedBy=ai-stack.target

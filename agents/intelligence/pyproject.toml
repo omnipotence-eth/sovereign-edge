@@ -1,0 +1,20 @@
+[project]
+name = "sovereign-edge-intelligence"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "sovereign-edge-core",
+    "sovereign-edge-llm",
+    "sovereign-edge-memory",
+    "sovereign-edge-observability",
+]
+
+[tool.uv.sources]
+sovereign-edge-core = { workspace = true }
+sovereign-edge-llm = { workspace = true }
+sovereign-edge-memory = { workspace = true }
+sovereign-edge-observability = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
