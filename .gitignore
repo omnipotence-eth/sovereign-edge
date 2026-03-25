@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+
+# uv
+uv.lock
+
+# Secrets (NEVER commit plaintext secrets)
+secrets/env.yaml
+secrets/*.key
+*.pem
+
+# Data (too large for git)
+data/stepbible/
+data/tsk/
+data/models/*.onnx
+data/models/*.gguf
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
