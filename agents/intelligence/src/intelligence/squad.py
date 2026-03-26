@@ -96,12 +96,12 @@ class IntelligenceSquad(BaseSquad):
                 logger.warning("hf_papers_exception error=%s", hf_papers)
                 hf_papers = []
 
-            sections: list[str] = []
+            all_papers: list[str] = []
             if arxiv_papers:
-                sections.append(f"arXiv (latest AI/ML):\n{format_papers(arxiv_papers)}")
+                all_papers.append(format_papers(arxiv_papers))
             if hf_papers:
-                sections.append(f"HuggingFace Daily Papers:\n{format_hf_papers(hf_papers)}")
-            research_context = "\n\n".join(sections)
+                all_papers.append(format_hf_papers(hf_papers))
+            research_context = "Recent AI/ML papers:\n" + "\n".join(all_papers) if all_papers else ""
 
         prior_turns: list[dict[str, str]] = []
         if history_json := task.context.get("history"):
@@ -164,13 +164,13 @@ class IntelligenceSquad(BaseSquad):
             logger.warning("hf_brief_exception error=%s", hf_papers)
             hf_papers = []
 
-        sections: list[str] = []
+        all_papers: list[str] = []
         if arxiv_papers:
-            sections.append(f"arXiv (latest AI/ML):\n{format_papers(arxiv_papers)}")
+            all_papers.append(format_papers(arxiv_papers))
         if hf_papers:
-            sections.append(f"HuggingFace Daily Papers:\n{format_hf_papers(hf_papers)}")
+            all_papers.append(format_hf_papers(hf_papers))
 
-        research_context = "\n\n".join(sections)
+        research_context = "Recent AI/ML papers:\n" + "\n".join(all_papers) if all_papers else ""
 
         result = await gateway.complete(
             messages=[

@@ -305,6 +305,20 @@ def _sanitize_markdown(text: str) -> str:
         text,
         flags=re.IGNORECASE | re.DOTALL,
     )
+    # Strip opening preamble lines ("Here are...", "The following...", etc.)
+    text = re.sub(
+        r"^(?:Here are|The following are|Below are|The latest)[^\n]*\n+",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    # Strip mid-list transition sentences ("Additionally, X has published...")
+    text = re.sub(
+        r"\n+Additionally,[^\n]*\n+",
+        "\n",
+        text,
+        flags=re.IGNORECASE,
+    )
     return text.strip()
 
 
