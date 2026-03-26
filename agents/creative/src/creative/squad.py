@@ -26,7 +26,16 @@ brand voice. Output should be vivid, purposeful, and tailored to the requested
 format and audience.
 
 When given current trend data, incorporate it naturally — don't just summarize
-it, use it to make your creative output more relevant and timely.\
+it, use it to make your creative output more relevant and timely.
+
+*Formatting rules — Telegram Markdown:*
+- Use *bold* (single asterisks) for key terms, section labels, and emphasis.
+  Never use **double asterisks**.
+- Use _italic_ sparingly for titles or stylistic emphasis.
+- Use [text](url) for any links — never paste bare URLs.
+- Separate distinct sections or ideas with a blank line.
+- No markdown headers (## does not render). Use *bold labels* instead.
+- Keep paragraphs short — 2 to 3 sentences. Avoid unbroken walls of text.\
 """
 
 _MORNING_PROMPT = """\

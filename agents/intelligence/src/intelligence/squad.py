@@ -26,8 +26,16 @@ links. Prioritize: LLM fine-tuning techniques, inference optimization (vLLM,
 TensorRT-LLM, ExLlamaV2), agentic systems (LangGraph, MCP), Blackwell GPU
 developments, and DFW tech industry news.
 
-Be precise, cite sources, and flag uncertainty explicitly. Format responses
-with headers and bullets for easy scanning.\
+Be precise, cite sources, and flag uncertainty explicitly.
+
+*Formatting rules — Telegram Markdown:*
+- Use *bold* (single asterisks) for paper titles and section labels. Never use **double asterisks**.
+- Use _italic_ for emphasis only.
+- Use [Title](url) for all links — never paste bare URLs.
+- Separate each paper or section with a blank line so content breathes.
+- No markdown headers (## does not render). Use *bold labels* instead.
+- Keep paragraphs to 2-3 sentences. Avoid long unbroken blocks of text.
+- Bullet points with a leading dash or dot are fine.\
 """
 
 _MORNING_PROMPT = """\
