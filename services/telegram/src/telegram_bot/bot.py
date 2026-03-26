@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -45,6 +46,14 @@ _WELCOME = (
     "Use /stats to see today's usage."
 )
 
+# Maximum characters accepted from user input — prevents context-window flooding
+_MAX_INPUT_CHARS = 2000
+
+# Per-chat rate limiting: max 1 request per N seconds
+_RATE_LIMIT_SECONDS = 2.0
+# chat_id → monotonic timestamp of last allowed request
+_last_request: dict[str, float] = {}
+
 
 def _auth(func: Callable[..., Any]) -> Callable[..., Any]:
     """Decorator — reject requests from anyone but the owner."""
@@ -59,8 +68,8 @@ def _auth(func: Callable[..., Any]) -> Callable[..., Any]:
             # Guard: message may be None for callback queries / channel posts
             if update.message is not None:
                 await update.message.reply_text("⛔ Unauthorised.")
-            logger.warning(
-                "unauthorised_request",
+            logger.critical(
+                "unauthorised_access_attempt",
                 chat_id=update.effective_chat.id,
                 user=getattr(update.effective_user, "username", "unknown"),
             )
@@ -200,6 +209,19 @@ class SovereignEdgeBot:
 
         chat_id = str(update.effective_chat.id)
         tg_chat_id = update.effective_chat.id
+
+        # Per-chat rate limit — reject if too soon after last request
+        now = time.monotonic()
+        last = _last_request.get(chat_id, 0.0)
+        if now - last < _RATE_LIMIT_SECONDS:
+            await update.message.reply_text("⏳ Slow down — one message at a time.")
+            return
+        _last_request[chat_id] = now
+
+        # Input length guard — prevent context-window flooding
+        if len(user_text) > _MAX_INPUT_CHARS:
+            logger.info("input_truncated chat_id=%s original_len=%d", chat_id, len(user_text))
+            user_text = user_text[:_MAX_INPUT_CHARS]
 
         intent, confidence, routing = await self._router.aroute(user_text)
 

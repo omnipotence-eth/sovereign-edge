@@ -174,7 +174,10 @@ class IntentRouter:
                     model_path,
                     providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
                 )
-                self._tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
+                self._tokenizer = AutoTokenizer.from_pretrained(
+                    "distilbert-base-uncased",
+                    revision="26bc1ad6c0ac742e9b52263c5f3d6fc869352be4",
+                )
                 self._use_onnx = True
                 logger.info("onnx_classifier_loaded path=%s", model_path)
             except Exception:
@@ -270,8 +273,8 @@ class IntentRouter:
 
     def _classify_onnx(self, text: str) -> tuple[Intent, float]:
         """Classify using fine-tuned DistilBERT ONNX model."""
-        assert self._tokenizer is not None
-        assert self._onnx_session is not None
+        if self._tokenizer is None or self._onnx_session is None:
+            raise RuntimeError("ONNX classifier called before tokenizer/session initialised")
 
         inputs = self._tokenizer(
             text, return_tensors="np", truncation=True, max_length=128, padding="max_length"

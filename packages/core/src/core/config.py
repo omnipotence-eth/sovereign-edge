@@ -80,6 +80,14 @@ def log_startup_warnings() -> None:
         if not value:
             logger.error("startup_missing_required key=%s — bot will not function", key)
 
+    # Validate chat_id is a valid integer — string comparison fails silently otherwise
+    if s.telegram_owner_chat_id and not s.telegram_owner_chat_id.lstrip("-").isdigit():
+        logger.error(
+            "startup_invalid_chat_id value=%r — must be a numeric Telegram chat ID; "
+            "all requests will be rejected",
+            s.telegram_owner_chat_id,
+        )
+
     missing_cloud = [k for k, v in cloud_keys.items() if not v]
     for key in missing_cloud:
         logger.warning("startup_missing_cloud_key key=%s — provider skipped", key)

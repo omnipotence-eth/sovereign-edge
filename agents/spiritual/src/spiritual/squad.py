@@ -69,15 +69,14 @@ class SpiritualSquad(BaseSquad):
             except (ValueError, TypeError):
                 pass
 
+        user_input = f"<user_request>\n{task.content}\n</user_request>"
         messages = [
             {"role": "system", "content": _SYSTEM_PROMPT},
             *prior_turns,
             {
                 "role": "user",
                 "content": (
-                    f"{scripture_context}\n\n---\n{task.content}"
-                    if scripture_context
-                    else task.content
+                    f"{scripture_context}\n\n---\n{user_input}" if scripture_context else user_input
                 ),
             },
         ]

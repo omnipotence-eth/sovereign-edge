@@ -14,9 +14,11 @@ Production upgrades:
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
+import socket
 import time
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 
 import httpx
 from core.config import get_settings
@@ -75,6 +77,31 @@ def _cache_set(key: str, value: str) -> None:
     _search_cache[key] = (value, time.monotonic() + _CACHE_TTL)
 
 
+# Private IP ranges — SSRF guard for fetch()
+_PRIVATE_NETS = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+]
+
+
+def _is_private_url(url: str) -> bool:
+    """Return True if the URL resolves to a private/loopback address."""
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname or ""
+        if not hostname:
+            return True
+        addr = ipaddress.ip_address(socket.gethostbyname(hostname))
+        return any(addr in net for net in _PRIVATE_NETS)
+    except Exception:
+        return True  # Fail closed on any resolution error
+
+
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 
@@ -127,7 +154,11 @@ async def fetch(url: str) -> str:
     """Fetch and clean any URL as markdown via Jina Reader.
 
     No cache — URLs are typically unique per call.
+    URLs resolving to private/loopback addresses are rejected (SSRF guard).
     """
+    if _is_private_url(url):
+        logger.warning("jina_fetch_blocked_ssrf url=%r", url)
+        return ""
     reader_url = f"{_READER_BASE}/{url}"
     client = _get_client()
 
