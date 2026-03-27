@@ -18,6 +18,7 @@ import asyncio
 import logging
 import os
 import time
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -63,14 +64,14 @@ def _build_providers() -> list[ProviderConfig]:
     s = get_settings()
     return [
         ProviderConfig(
-            model="groq/llama-3.3-70b-versatile",
+            model="groq/meta-llama/llama-4-scout-17b-16e-instruct",
             rpm=s.groq_rpm,
             tpd=500_000,
             priority=1,
             env_key="GROQ_API_KEY",
         ),
         ProviderConfig(
-            model="gemini/gemini-2.5-flash-preview-04-17",
+            model="gemini/gemini-2.5-flash",
             rpm=s.gemini_rpm,
             tpd=250_000,
             priority=2,
@@ -94,6 +95,28 @@ def _build_providers() -> list[ProviderConfig]:
 
 
 LOCAL_FALLBACK_MODEL = "ollama/qwen3:0.6b"
+
+# Keywords that signal a complex/technical query — these should use premium providers
+_TECHNICAL_KEYWORDS = frozenset({
+    "arxiv", "paper", "model", "training", "inference", "transformer", "llm",
+    "fine-tun", "embedding", "benchmark", "dataset", "gpu", "cuda", "vram",
+    "grpo", "rlhf", "lora", "qlora", "attention", "quantiz", "research",
+})
+
+
+def _is_simple_query(messages: list[dict[str, str]]) -> bool:
+    """Return True for short, non-technical queries that can use Mistral first.
+
+    Mistral has 33M TPD free — routing simple queries there preserves Groq/Gemini
+    capacity for complex intelligence and career work.
+    """
+    last_user = next(
+        (m["content"] for m in reversed(messages) if m.get("role") == "user"), ""
+    )
+    if len(last_user) > 250:
+        return False
+    lower = last_user.lower()
+    return not any(kw in lower for kw in _TECHNICAL_KEYWORDS)
 
 
 @dataclass
@@ -182,7 +205,14 @@ class LLMGateway:
         if routing == RoutingDecision.LOCAL:
             return await self._call_local(messages, max_tokens, temperature, squad)
 
-        for provider in sorted(self._providers, key=lambda p: p.priority):
+        # Simple conversational queries go to Mistral first — it has 33M TPD free
+        # and this preserves Groq/Gemini quota for complex research and career work.
+        if _is_simple_query(messages):
+            sort_key = lambda p: 1 if "mistral" in p.model else p.priority  # noqa: E731
+        else:
+            sort_key = lambda p: p.priority  # noqa: E731
+
+        for provider in sorted(self._providers, key=sort_key):
             if self.tracker.get(provider.model) >= provider.tpd:
                 logger.debug("provider_daily_limit_reached model=%s", provider.model)
                 continue
@@ -197,6 +227,75 @@ class LLMGateway:
 
         logger.warning("all_cloud_providers_failed falling_back=local")
         return await self._call_local(messages, max_tokens, temperature, squad)
+
+    async def stream_complete(
+        self,
+        messages: list[dict[str, str]],
+        routing: RoutingDecision = RoutingDecision.CLOUD,
+        max_tokens: int = 2048,
+        temperature: float = 0.7,
+        squad: str = "general",
+    ) -> AsyncGenerator[str, None]:
+        """Stream completion chunks through the fallback chain.
+
+        Yields text chunks as they arrive from the first available provider.
+        Falls back to yielding the full local response if all cloud providers fail.
+        Token usage is tracked from the final usage chunk LiteLLM appends.
+        """
+
+        if routing == RoutingDecision.LOCAL:
+            result = await self._call_local(messages, max_tokens, temperature, squad)
+            yield result["content"]
+            return
+
+        if _is_simple_query(messages):
+            sort_key = lambda p: 1 if "mistral" in p.model else p.priority  # noqa: E731
+        else:
+            sort_key = lambda p: p.priority  # noqa: E731
+
+        for provider in sorted(self._providers, key=sort_key):
+            if self.tracker.get(provider.model) >= provider.tpd:
+                continue
+            if not self._buckets[provider.model].acquire():
+                continue
+
+            try:
+                response = await litellm.acompletion(  # type: ignore[attr-defined]
+                    model=provider.model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    stream=True,
+                    stream_options={"include_usage": True},
+                    timeout=30,
+                )
+                tokens_in = tokens_out = 0
+                async for chunk in response:
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        yield chunk.choices[0].delta.content
+                    if hasattr(chunk, "usage") and chunk.usage:
+                        tokens_in = chunk.usage.prompt_tokens or 0
+                        tokens_out = chunk.usage.completion_tokens or 0
+
+                self.tracker.add(provider.model, tokens_in + tokens_out)
+                logger.info(
+                    "stream_response model=%s squad=%s tokens_in=%d tokens_out=%d",
+                    provider.model, squad, tokens_in, tokens_out,
+                )
+                return  # success — do not try next provider
+
+            except litellm.RateLimitError:  # type: ignore[attr-defined]
+                logger.warning("stream_rate_limited model=%s", provider.model)
+            except litellm.AuthenticationError:  # type: ignore[attr-defined]
+                logger.warning("stream_auth_failed model=%s — check API key", provider.model)
+            except (litellm.ServiceUnavailableError, TimeoutError, litellm.Timeout):  # type: ignore[attr-defined]
+                logger.warning("stream_provider_unavailable model=%s", provider.model)
+            except Exception:
+                logger.warning("stream_unexpected_error model=%s", provider.model, exc_info=True)
+
+        logger.warning("all_stream_providers_failed falling_back=local")
+        result = await self._call_local(messages, max_tokens, temperature, squad)
+        yield result["content"]
 
     async def _call_with_retry(
         self,

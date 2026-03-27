@@ -1,0 +1,95 @@
+version: "3.9"
+
+# ============================================================
+# Sovereign Edge — VPS deployment
+# Usage:
+#   cp .env.example .env && nano .env   # fill in secrets
+#   docker compose up -d
+# ============================================================
+
+networks:
+  sovereign-net:
+    driver: bridge
+
+services:
+
+  # ----------------------------------------------------------
+  # Main bot + orchestrator
+  # ----------------------------------------------------------
+  sovereign-edge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sovereign-edge:latest
+    container_name: sovereign-edge
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Persistent data: SQLite trace DB, LanceDB vectors, logs
+      - ./data:/app/data
+    networks:
+      - sovereign-net
+    ports:
+      # Expose health endpoint to localhost only; put nginx/caddy in front for TLS
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    # Forward SE_ env vars that control paths — these match the Dockerfile ENV defaults,
+    # but are listed here for explicitness and easy override.
+    environment:
+      SE_SSD_ROOT: /app/data
+      SE_LANCEDB_PATH: /app/data/lancedb
+      SE_LOGS_PATH: /app/data/logs
+      SE_MODELS_PATH: /app/data/models
+      SE_PROJECT_ROOT: /app
+    depends_on:
+      ollama:
+        condition: service_healthy
+        required: false   # bot starts even if ollama is absent (cloud-only mode)
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ----------------------------------------------------------
+  # Ollama — local LLM fallback (optional)
+  # Remove this service on VPS if you rely solely on cloud APIs.
+  # For GPU passthrough on a VPS with NVIDIA drivers + NVIDIA
+  # Container Toolkit installed, uncomment the deploy block below.
+  # ----------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: sovereign-edge-ollama
+    restart: unless-stopped
+    volumes:
+      - ./data/ollama:/root/.ollama
+    networks:
+      - sovereign-net
+    ports:
+      - "127.0.0.1:11434:11434"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s   # model loading takes time
+      retries: 5
+    # ---- GPU passthrough (VPS with NVIDIA runtime) ----
+    # Uncomment if the host has NVIDIA Container Toolkit installed:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"

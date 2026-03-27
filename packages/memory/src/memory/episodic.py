@@ -88,3 +88,14 @@ class EpisodicMemory:
         except Exception as e:
             logger.error("Failed to get memories: %s", e, exc_info=True)
             return []
+
+
+_episodic_instance: EpisodicMemory | None = None
+
+
+def get_episodic_memory() -> EpisodicMemory:
+    """Module-level singleton — preserves Mem0 connection across calls."""
+    global _episodic_instance
+    if _episodic_instance is None:
+        _episodic_instance = EpisodicMemory()
+    return _episodic_instance

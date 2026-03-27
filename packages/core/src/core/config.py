@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     mistral_api_key: str = ""
     telegram_bot_token: str = ""
     telegram_owner_chat_id: str = ""
+    discord_bot_token: str = ""
+    discord_owner_user_id: str = ""
     alpha_vantage_key: str = ""
     jina_api_key: str = ""
 

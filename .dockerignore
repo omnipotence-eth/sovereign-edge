@@ -1,0 +1,61 @@
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Python byte-code and caches
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.ty_cache
+
+# Virtual environments (builder stage creates its own)
+.venv
+venv
+env
+
+# Large model artifacts — never bake into the image
+*.gguf
+*.safetensors
+*.bin
+*.pt
+*.ckpt
+checkpoints/
+data/models/
+
+# Secrets — never bake into the image
+.env
+.env.*
+secrets/
+!.env.example
+
+# Test and evaluation suites
+tests/
+evals/
+
+# Documentation
+docs/
+*.md
+!SOUL.md.example
+
+# systemd — not needed inside container
+systemd/
+
+# Editor / OS junk
+.vscode/
+.cursor/
+.idea/
+*.DS_Store
+Thumbs.db
+
+# CI artifacts
+dist/
+build/
+*.egg-info/
+
+# Claude Code worktree artifacts
+.claude/

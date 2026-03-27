@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import signal
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -39,13 +39,15 @@ logger = get_logger(__name__, component="orchestrator")
 class Orchestrator:
     """Central dispatcher and morning-pipeline scheduler."""
 
-    def __init__(self) -> None:
+    def __init__(self, use_director: bool = False) -> None:
         self._settings = get_settings()
         self._squads: dict[str, BaseSquad] = {}
         self._scheduler = AsyncIOScheduler(timezone=self._settings.timezone)
         self._running = False
         self._send_fn: Callable[[str], Awaitable[None]] | None = None
         self._trace_store = TraceStore()
+        self._use_director = use_director
+        self._director: Any = None  # DirectorGraph — loaded lazily after squads register
 
     # ------------------------------------------------------------------ #
     # Public properties                                                    #
@@ -124,29 +126,30 @@ class Orchestrator:
             except Exception:
                 logger.debug("semantic_cache_lookup_failed", exc_info=True)
 
-        # ── 3. Normal squad dispatch ────────────────────────────────────
-        squad_name = self._resolve_squad(request)
-        squad = (
-            self._squads.get(squad_name)
-            or self._squads.get(SquadName.INTELLIGENCE)
-            or next(iter(self._squads.values()), None)
-        )
-
-        if squad is None:
-            logger.warning(
-                "no_squads_registered",
-                squad_name=squad_name,
-                intent=request.intent.value,
+        # ── 3. Dispatch — director graph or single-squad ────────────────
+        if self._director is not None:
+            result = await self._director.run(request)
+        else:
+            squad_name = self._resolve_squad(request)
+            squad = (
+                self._squads.get(squad_name)
+                or self._squads.get(SquadName.INTELLIGENCE)
+                or next(iter(self._squads.values()), None)
             )
-            return TaskResult(
-                task_id=request.task_id,
-                squad=SquadName.GENERAL,
-                content="No squads are registered.",
-                model_used="none",
-                routing=RoutingDecision.LOCAL,
-            )
-
-        result = await squad.process(request)
+            if squad is None:
+                logger.warning(
+                    "no_squads_registered",
+                    squad_name=squad_name,
+                    intent=request.intent.value,
+                )
+                return TaskResult(
+                    task_id=request.task_id,
+                    squad=SquadName.GENERAL,
+                    content="No squads are registered.",
+                    model_used="none",
+                    routing=RoutingDecision.LOCAL,
+                )
+            result = await squad.process(request)
 
         # ── 4. Store result in semantic cache ───────────────────────────
         if request.routing == RoutingDecision.CLOUD and not result.cached and request.intent != Intent.INTELLIGENCE:
@@ -168,10 +171,119 @@ class Orchestrator:
             except Exception:
                 logger.debug("conversation_history_store_failed", exc_info=True)
 
+        # ── 6. Extract long-term facts into episodic memory ─────────────
+        if chat_id:
+            try:
+                from memory.episodic import get_episodic_memory
+
+                text = f"User: {request.content}\nAssistant: {result.content}"
+                get_episodic_memory().add(text, user_id=chat_id)
+            except Exception:
+                logger.debug("episodic_memory_add_failed", exc_info=True)
+
         # TraceStore.record() has internal try/except — observability failures
         # must never crash the dispatch path.
         self._trace_store.record(result)
         return result
+
+    async def stream_dispatch(self, request: TaskRequest) -> AsyncGenerator[str, None]:
+        """Like dispatch(), but streams LLM chunks as they arrive.
+
+        Runs the full pipeline (history inject → cache check → squad stream →
+        cache store → history store → episodic memory) yielding text chunks
+        from the squad's stream_process() so the bot can edit messages live.
+        Cache hits and local-routing results are yielded as single chunks.
+        """
+        chat_id = request.context.get("chat_id", "")
+
+        # ── 1. Inject conversation history ──────────────────────────────
+        if chat_id:
+            try:
+                from memory.conversation import get_conversation_store
+
+                history_json = get_conversation_store().get_recent_json(chat_id)
+                if history_json:
+                    new_ctx = dict(request.context)
+                    new_ctx["history"] = history_json
+                    request = request.model_copy(update={"context": new_ctx})
+            except Exception:
+                logger.debug("stream_history_inject_failed", exc_info=True)
+
+        # ── 2. Semantic cache check — yield immediately on hit ───────────
+        if request.routing == RoutingDecision.CLOUD and request.intent != Intent.INTELLIGENCE:
+            try:
+                from memory.semantic_cache import get_cache
+
+                cached = await get_cache().lookup(request.content, squad="")
+                if cached is not None:
+                    result = TaskResult(
+                        task_id=request.task_id,
+                        squad=request.squad,
+                        content=cached["content"],
+                        model_used="cache",
+                        routing=RoutingDecision.CACHE,
+                        cached=True,
+                    )
+                    self._trace_store.record(result)
+                    yield cached["content"]
+                    return
+            except Exception:
+                logger.debug("stream_cache_lookup_failed", exc_info=True)
+
+        # ── 3. Resolve squad and stream ──────────────────────────────────
+        squad_name = self._resolve_squad(request)
+        squad = (
+            self._squads.get(squad_name)
+            or self._squads.get(SquadName.INTELLIGENCE)
+            or next(iter(self._squads.values()), None)
+        )
+        if squad is None:
+            yield "No squads are registered."
+            return
+
+        full_content = ""
+        async for chunk in squad.stream_process(request):
+            full_content += chunk
+            yield chunk
+
+        # ── 4–6. Post-stream bookkeeping (same as dispatch) ─────────────
+        if request.routing == RoutingDecision.CLOUD and request.intent != Intent.INTELLIGENCE:
+            try:
+                from memory.semantic_cache import get_cache
+
+                await get_cache().store(request.content, full_content, squad=squad_name)
+            except Exception:
+                logger.debug("stream_cache_store_failed", exc_info=True)
+
+        if chat_id:
+            try:
+                from memory.conversation import get_conversation_store
+
+                store = get_conversation_store()
+                store.add_turn(chat_id, "user", request.content)
+                store.add_turn(chat_id, "assistant", full_content, squad=squad_name)
+            except Exception:
+                logger.debug("stream_history_store_failed", exc_info=True)
+
+        if chat_id:
+            try:
+                from memory.episodic import get_episodic_memory
+
+                get_episodic_memory().add(
+                    f"User: {request.content}\nAssistant: {full_content}",
+                    user_id=chat_id,
+                )
+            except Exception:
+                logger.debug("stream_episodic_add_failed", exc_info=True)
+
+        result = TaskResult(
+            task_id=request.task_id,
+            squad=SquadName(squad_name),
+            content=full_content,
+            model_used="stream",
+            routing=request.routing,
+        )
+        self._trace_store.record(result)
 
     def _resolve_squad(self, request: TaskRequest) -> str:
         intent_map = {
@@ -313,7 +425,19 @@ class Orchestrator:
         self._register_jobs()
         self._scheduler.start()
         self._running = True
-        logger.info("orchestrator_started")
+
+        # Initialise director after squads are registered (lazy — requires langgraph)
+        if self._use_director and self._squads:
+            try:
+                from director.graph import DirectorGraph
+
+                self._director = DirectorGraph(squads=self._squads)
+                logger.info("director_initialized squads=%s", list(self._squads.keys()))
+            except ImportError:
+                logger.warning(
+                    "director_import_failed — install sovereign-edge-director for multi-squad chains"
+                )
+        logger.info("orchestrator_started director=%s", self._use_director)
 
     async def stop(self) -> None:
         self._scheduler.shutdown(wait=False)

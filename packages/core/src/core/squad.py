@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncGenerator
 
 from core.types import TaskRequest, TaskResult
 
@@ -25,6 +26,15 @@ class BaseSquad(ABC):
     async def morning_brief(self) -> str:
         """Generate content for the morning digest. Called at 05:00 CT."""
         ...
+
+    async def stream_process(self, task: TaskRequest) -> AsyncGenerator[str, None]:
+        """Stream response chunks. Default: yields full process() result at once.
+
+        Override in squads that support true token-by-token streaming to give
+        users live feedback as the LLM generates rather than waiting for completion.
+        """
+        result = await self.process(task)
+        yield result.content
 
     async def health_check(self) -> bool:
         """Return True if squad is operational."""

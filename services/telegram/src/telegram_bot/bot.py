@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 from core.config import get_settings, log_startup_warnings
 from core.types import TaskPriority, TaskRequest
 from observability.logging import get_logger, setup_logging
-from router.classifier import IntentRouter
+from router.classifier import LOW_CONFIDENCE_THRESHOLD, IntentRouter
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -53,6 +53,9 @@ _MAX_INPUT_CHARS = 2000
 _RATE_LIMIT_SECONDS = 2.0
 # chat_id → monotonic timestamp of last allowed request
 _last_request: dict[str, float] = {}
+
+# Streaming: minimum seconds between Telegram message edits (rate limit is ~1/s per message)
+_STREAM_EDIT_INTERVAL = 0.8
 
 
 def _auth(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -110,6 +113,7 @@ class SovereignEdgeBot:
         self._app.add_handler(CommandHandler("status", self._cmd_status))
         self._app.add_handler(CommandHandler("squads", self._cmd_squads))
         self._app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_message))
+        self._app.add_handler(MessageHandler(filters.Document.ALL, self._on_document))
 
         await self._app.initialize()
         await self._app.start()
@@ -225,6 +229,15 @@ class SovereignEdgeBot:
 
         intent, confidence, routing = await self._router.aroute(user_text)
 
+        # Low-confidence general query — nudge the user toward a specific squad.
+        # Still dispatches so they get an answer; the hint improves future routing.
+        if intent.value == "GENERAL" and confidence <= LOW_CONFIDENCE_THRESHOLD:
+            await update.message.reply_text(
+                "🤔 _Not sure which squad fits this — routing to intelligence._\n"
+                "For better results try: Bible/faith · job search · AI research · content creation",
+                parse_mode="Markdown",
+            )
+
         request = TaskRequest(
             content=user_text,
             intent=intent,
@@ -233,43 +246,209 @@ class SovereignEdgeBot:
             context={"chat_id": chat_id},
         )
 
-        # Send typing immediately — guaranteed visible even on cache hits
+        # Send typing indicator while papers are being fetched
         await ctx.bot.send_chat_action(chat_id=tg_chat_id, action="typing")
 
-        # Background refresher keeps the indicator alive every 4 s for slow LLM calls
-        stop_typing = asyncio.Event()
-        typing_task = asyncio.create_task(_keep_typing(ctx.bot, tg_chat_id, stop_typing))
-        try:
-            result = await self._orchestrator.dispatch(request)
-            reply = result.content
-        except Exception:
-            logger.error("dispatch_failed", exc_info=True)
-            reply = "⚠️ Something went wrong. Please try again."
-        finally:
-            stop_typing.set()
-            typing_task.cancel()
-            try:
-                await asyncio.wait_for(typing_task, timeout=1.0)
-            except (TimeoutError, asyncio.CancelledError):
-                pass
+        # Send a placeholder message — streaming edits this in place
+        placeholder = await update.message.reply_text("…")
 
-        # Telegram has a 4096-char limit per message
-        for chunk in _split(_sanitize_markdown(reply), 4000):
+        buffer = ""
+        last_edit = time.monotonic()
+        try:
+            async for chunk in self._orchestrator.stream_dispatch(request):
+                buffer += chunk
+                # Edit at most every 800 ms to stay within Telegram's rate limit
+                if time.monotonic() - last_edit >= _STREAM_EDIT_INTERVAL and buffer:
+                    try:
+                        await placeholder.edit_text(
+                            _sanitize_markdown(buffer + " ▌"), parse_mode="Markdown"
+                        )
+                        last_edit = time.monotonic()
+                    except Exception:
+                        logger.debug("stream_edit_failed", exc_info=True)
+        except Exception:
+            logger.error("stream_dispatch_failed", exc_info=True)
+            buffer = buffer or "⚠️ Something went wrong. Please try again."
+
+        # Final edit — clean text, no cursor; overflow into extra messages if needed
+        chunks_out = _split(_sanitize_markdown(buffer), 4000)
+        try:
+            await placeholder.edit_text(chunks_out[0], parse_mode="Markdown")
+        except Exception:
             try:
-                await update.message.reply_text(chunk, parse_mode="Markdown")
+                await placeholder.edit_text(chunks_out[0])
             except Exception:
-                try:
-                    await update.message.reply_text(chunk)
-                except Exception:
-                    logger.error("reply_text_failed", exc_info=True)
+                logger.error("final_edit_failed", exc_info=True)
+        for overflow in chunks_out[1:]:
+            try:
+                await update.message.reply_text(overflow, parse_mode="Markdown")
+            except Exception:
+                await update.message.reply_text(overflow)
 
         logger.info(
             "message_handled",
             intent=intent.value,
             confidence=round(confidence, 2),
             routing=routing.value,
-            chars=len(reply),
+            chars=len(buffer),
         )
+
+    # ------------------------------------------------------------------ #
+    # Document / file handler                                             #
+    # ------------------------------------------------------------------ #
+
+    @_auth
+    async def _on_document(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle file uploads — extract text and route to the appropriate squad.
+
+        Supported: PDF (pdfplumber), plain text (.txt / .md), DOCX (python-docx).
+        Files are downloaded to a temp path, extracted, then deleted — never stored.
+        The file name and type inform routing:
+          - resume.pdf / cv.pdf → CAREER squad
+          - *.pdf with no signal   → INTELLIGENCE (treat as research paper)
+          - *.txt / *.md          → route by content via IntentRouter
+        """
+        import tempfile
+        from pathlib import Path
+
+        doc = update.message.document
+        if doc is None:
+            return
+
+        fname = (doc.file_name or "").lower()
+        chat_id = str(update.effective_chat.id)
+        await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+
+        # Download to temp file
+        try:
+            tg_file = await ctx.bot.get_file(doc.file_id)
+            suffix = Path(fname).suffix or ".bin"
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                tmp_path = Path(tmp.name)
+            await tg_file.download_to_drive(str(tmp_path))
+        except Exception:
+            logger.error("document_download_failed fname=%s", fname, exc_info=True)
+            await update.message.reply_text("⚠️ Could not download the file.")
+            return
+
+        # Extract text
+        text = ""
+        try:
+            text = _extract_file_text(tmp_path, fname)
+        except Exception:
+            logger.error("document_extract_failed fname=%s", fname, exc_info=True)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+        if not text.strip():
+            await update.message.reply_text(
+                "⚠️ Could not extract text from this file. "
+                "Supported formats: PDF, DOCX, TXT, MD."
+            )
+            return
+
+        # Determine intent from filename signal first, then content
+        if any(kw in fname for kw in ("resume", "cv", "cover")):
+            from core.types import Intent, RoutingDecision
+            intent, routing = Intent.CAREER, RoutingDecision.CLOUD
+            confidence = 0.9
+        else:
+            intent, confidence, routing = await self._router.aroute(text[:500])
+
+        content = (
+            f"[File: {doc.file_name}]\n\n{text[:6000]}"
+            if len(text) > 6000
+            else f"[File: {doc.file_name}]\n\n{text}"
+        )
+        request = TaskRequest(
+            content=content,
+            intent=intent,
+            priority=TaskPriority.HIGH,
+            routing=routing,
+            context={"chat_id": chat_id},
+        )
+
+        await update.message.reply_text(
+            f"📄 Processing _{doc.file_name}_ → *{intent.value.lower()}* squad…",
+            parse_mode="Markdown",
+        )
+
+        placeholder = await update.message.reply_text("…")
+        buffer = ""
+        last_edit = time.monotonic()
+        try:
+            async for chunk in self._orchestrator.stream_dispatch(request):
+                buffer += chunk
+                if time.monotonic() - last_edit >= _STREAM_EDIT_INTERVAL and buffer:
+                    try:
+                        await placeholder.edit_text(
+                            _sanitize_markdown(buffer + " ▌"), parse_mode="Markdown"
+                        )
+                        last_edit = time.monotonic()
+                    except Exception:
+                        logger.debug("doc_stream_edit_failed", exc_info=True)
+        except Exception:
+            logger.error("doc_stream_dispatch_failed", exc_info=True)
+            buffer = buffer or "⚠️ Something went wrong processing the file."
+
+        clean = _sanitize_markdown(buffer)
+        chunks_out = _split(clean, 4000)
+        try:
+            await placeholder.edit_text(chunks_out[0], parse_mode="Markdown")
+        except Exception:
+            await placeholder.edit_text(chunks_out[0])
+        for overflow in chunks_out[1:]:
+            try:
+                await update.message.reply_text(overflow, parse_mode="Markdown")
+            except Exception:
+                await update.message.reply_text(overflow)
+
+        logger.info(
+            "document_handled fname=%s intent=%s confidence=%.2f chars=%d",
+            fname, intent.value, confidence, len(buffer),
+        )
+
+
+def _extract_file_text(path: object, fname: str) -> str:
+    """Extract plain text from a file. Supports PDF, DOCX, TXT, MD.
+
+    Requires optional deps: pdfplumber (PDF), python-docx (DOCX).
+    Falls back to raw UTF-8 read for text files. Returns empty string on failure.
+    """
+    from pathlib import Path
+
+    p = Path(str(path))
+    ext = p.suffix.lower()
+
+    if ext == ".pdf":
+        try:
+            import pdfplumber  # type: ignore[import-untyped]
+
+            with pdfplumber.open(str(p)) as pdf:
+                pages = [page.extract_text() or "" for page in pdf.pages[:30]]
+            return "\n\n".join(pages).strip()
+        except ImportError:
+            logger.warning("pdfplumber not installed — PDF extraction unavailable")
+            return ""
+
+    if ext in (".docx",):
+        try:
+            import docx  # type: ignore[import-untyped]
+
+            doc = docx.Document(str(p))
+            return "\n".join(p.text for p in doc.paragraphs if p.text).strip()
+        except ImportError:
+            logger.warning("python-docx not installed — DOCX extraction unavailable")
+            return ""
+
+    if ext in (".txt", ".md", ".rst", ".csv"):
+        try:
+            return p.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            return ""
+
+    logger.info("unsupported_file_type ext=%s fname=%s", ext, fname)
+    return ""
 
 
 async def _keep_typing(bot: Any, chat_id: int, stop: asyncio.Event) -> None:  # noqa: ANN401
@@ -363,7 +542,7 @@ async def _run() -> None:
     from orchestrator.main import Orchestrator
     from spiritual.squad import SpiritualSquad
 
-    orch = Orchestrator()
+    orch = Orchestrator(use_director=True)
     for squad in (SpiritualSquad(), CareerSquad(), IntelligenceSquad(), CreativeSquad()):
         orch.register(squad)
 

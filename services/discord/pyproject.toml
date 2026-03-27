@@ -1,5 +1,5 @@
 [project]
-name = "sovereign-edge-telegram"
+name = "sovereign-edge-discord"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
@@ -8,14 +8,7 @@ dependencies = [
     "sovereign-edge-memory",
     "sovereign-edge-observability",
     "sovereign-edge-router",
-    "python-telegram-bot>=21.0,<22.0",
-]
-
-[project.optional-dependencies]
-# File extraction — install for PDF and DOCX upload support in _on_document
-files = [
-    "pdfplumber>=0.11,<1.0",
-    "python-docx>=1.1,<2.0",
+    "discord.py>=2.3,<3.0",
 ]
 
 [tool.uv.sources]
@@ -26,7 +19,7 @@ sovereign-edge-observability = { workspace = true }
 sovereign-edge-router = { workspace = true }
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/telegram_bot"]
+packages = ["src/discord_bot"]
 
 [build-system]
 requires = ["hatchling"]

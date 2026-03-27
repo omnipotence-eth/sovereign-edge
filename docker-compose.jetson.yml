@@ -1,0 +1,45 @@
+version: "3.9"
+
+# ============================================================
+# Sovereign Edge — Jetson edge deployment override
+#
+# Usage (combines with base docker-compose.yml):
+#   docker compose -f docker-compose.yml -f docker-compose.jetson.yml up -d
+#
+# Requirements on host:
+#   - NVIDIA Container Toolkit (JetPack ships this)
+#   - Docker runtime set to nvidia:
+#       sudo nvidia-ctk runtime configure --runtime=docker
+#       sudo systemctl restart docker
+# ============================================================
+
+services:
+
+  sovereign-edge:
+    # Jetson resource constraints — 8 GB unified memory shared with GPU
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "0.8"       # 80 % CPU quota across cores
+        reservations:
+          memory: 512M
+    environment:
+      # Inform the app it is running on the edge node
+      SE_DEPLOYMENT_ENV: jetson
+
+  ollama:
+    # Give Ollama the NVIDIA runtime so it can use the Jetson GPU
+    runtime: nvidia
+    deploy:
+      resources:
+        limits:
+          memory: 4G          # leave headroom for the bot process
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility

@@ -8,13 +8,35 @@ so briefings always reflect the current state of the field.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 
 from core.squad import BaseSquad
 from core.types import RoutingDecision, SquadName, TaskRequest, TaskResult
 from observability.logging import get_logger
+from pydantic import BaseModel, model_validator
 
 logger = get_logger(__name__, component="intelligence")
+
+
+class BriefOutput(BaseModel):
+    """Validated intelligence brief — ensures structural quality before delivery.
+
+    Used by evals and runtime logging. A brief missing links or too short
+    signals a degraded LLM response worth investigating.
+    """
+
+    content: str
+    word_count: int = 0
+    link_count: int = 0
+    is_valid: bool = False
+
+    @model_validator(mode="after")
+    def _validate(self) -> BriefOutput:
+        self.word_count = len(self.content.split())
+        self.link_count = len(re.findall(r"https?://\S+", self.content))
+        self.is_valid = bool(self.content.strip()) and self.link_count > 0
+        return self
 
 _SYSTEM_PROMPT = """\
 OUTPUT FORMAT — MANDATORY:
@@ -133,10 +155,18 @@ class IntelligenceSquad(BaseSquad):
             squad=self.name,
         )
 
+        brief = BriefOutput(content=result["content"])
+        if not brief.is_valid:
+            logger.warning(
+                "brief_quality_low squad=intelligence links=%d words=%d",
+                brief.link_count,
+                brief.word_count,
+            )
+
         return TaskResult(
             task_id=task.task_id,
             squad=SquadName.INTELLIGENCE,
-            content=result["content"],
+            content=brief.content,
             model_used=result["model"],
             tokens_in=result["tokens_in"],
             tokens_out=result["tokens_out"],
@@ -188,7 +218,73 @@ class IntelligenceSquad(BaseSquad):
             routing=RoutingDecision.CLOUD,
             squad=self.name,
         )
-        return result["content"]
+        brief = BriefOutput(content=result["content"])
+        if not brief.is_valid:
+            logger.warning(
+                "morning_brief_quality_low links=%d words=%d",
+                brief.link_count,
+                brief.word_count,
+            )
+        return brief.content
+
+    async def stream_process(self, task: TaskRequest):  # type: ignore[override]  # noqa: ANN201
+        """Real token-by-token streaming for intelligence responses.
+
+        Fetches papers in parallel then streams from the LLM so the first words
+        appear immediately rather than after the full response is generated.
+        """
+        from llm.gateway import get_gateway
+        from search.arxiv import fetch_recent, format_papers
+        from search.hf import fetch_daily_papers, format_hf_papers
+
+        gateway = get_gateway()
+        research_context = ""
+        if task.routing == RoutingDecision.CLOUD:
+            arxiv_papers, hf_papers = await asyncio.gather(
+                fetch_recent(max_results=5),
+                fetch_daily_papers(),
+                return_exceptions=True,
+            )
+            if isinstance(arxiv_papers, Exception):
+                arxiv_papers = []
+            if isinstance(hf_papers, Exception):
+                hf_papers = []
+            all_papers: list[str] = []
+            if arxiv_papers:
+                all_papers.append(format_papers(arxiv_papers))
+            if hf_papers:
+                all_papers.append(format_hf_papers(hf_papers))
+            research_context = "Recent AI/ML papers:\n" + "\n".join(all_papers) if all_papers else ""
+
+        prior_turns: list[dict[str, str]] = []
+        if history_json := task.context.get("history"):
+            try:
+                import json
+                prior_turns = json.loads(history_json)
+            except (ValueError, TypeError):
+                pass
+
+        user_input = f"<user_request>\n{task.content}\n</user_request>"
+        messages = [
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            *prior_turns,
+            {
+                "role": "user",
+                "content": (
+                    f"Live research data:\n{research_context}\n\n---\n{user_input}"
+                    if research_context
+                    else user_input
+                ),
+            },
+        ]
+
+        async for chunk in gateway.stream_complete(
+            messages=messages,
+            max_tokens=2048,
+            routing=task.routing,
+            squad=self.name,
+        ):
+            yield chunk
 
     async def health_check(self) -> bool:
         try:
