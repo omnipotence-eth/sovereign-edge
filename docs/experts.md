@@ -1,6 +1,6 @@
 # Experts
 
-Each expert is a specialized AI agent with its own system prompt, live data sources, and response format. All experts share the same LLM gateway and write to the same trace store.
+Each expert is a specialized AI agent implemented as a compiled LangGraph `StateGraph` subgraph. Requests flow through a multi-node pipeline — fetching live data, ranking or searching, then synthesizing a response — before passing to the shared LLM gateway. All experts write to the same trace store and fall back gracefully to a direct LLM call when LangGraph is unavailable.
 
 ---
 
@@ -25,6 +25,16 @@ Papers are de-duplicated across calls via a daily novelty filter — the same pa
 - Trend spotting: identify emerging methods and architectural patterns
 - Concept explanation: break down novel techniques with concrete examples
 - Literature context: situate a paper within the broader research landscape
+
+### Pipeline
+
+```
+arxiv_fetcher ──┐
+                ├──► ranker (FlashRank cross-encoder) ──► synthesizer
+hf_fetcher    ──┘
+```
+
+`arxiv_fetcher` and `hf_fetcher` run in the same LangGraph superstep (true parallel execution). Both write to a shared `raw_papers` list via `operator.add` merge. `ranker` waits for both before scoring, then `synthesizer` produces the final response.
 
 ### Morning Brief
 
@@ -66,6 +76,12 @@ Personalized via environment variables — see [Configuration](configuration.md#
 - Market intelligence: hiring trends and salary ranges for target location
 - Offer evaluation: total compensation analysis
 
+### Pipeline
+
+```
+job_searcher (Jina live search) ──► strategist (LLM synthesis)
+```
+
 ### Morning Brief
 
 Runs at 06:00 and 18:00 (configurable via `SE_MORNING_WAKE_HOUR` / `SE_TIMEZONE`). Searches for new openings in the target location and roles, extracts the highest-value listing, and provides one concrete action to take that day. Scoped to 250 tokens.
@@ -92,6 +108,12 @@ A content strategist and creative director with live trend awareness. Grounds cr
 - Content strategy: editorial calendar, pillar content, repurposing frameworks
 - Brand voice development: articulate and document tone, vocabulary, persona
 - Storytelling: narrative structure, hooks, and audience-specific framing
+
+### Pipeline
+
+```
+trend_researcher (Jina live search) ──► writer (LLM generation)
+```
 
 ### Morning Brief
 
@@ -120,6 +142,12 @@ Supports KJV, WEB, YLT, DARBY, ASV, and BBE translations. KJV is the default.
 - Devotionals: short daily reflections anchored to scripture
 - Theological questions: Christian doctrine, church history, apologetics
 - Faith application: connecting scripture to daily life and decision-making
+
+### Pipeline
+
+```
+scripture_fetcher (Bible API) ──► theologian (LLM devotional)
+```
 
 ### Scripture Handling
 

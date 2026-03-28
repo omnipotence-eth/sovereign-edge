@@ -148,6 +148,7 @@ pytest tests/test_router.py::test_pii_detection -v
 - Every happy-path test has at least one failure/edge-case counterpart.
 - Use `caplog` to assert log output, not `capsys`.
 - The LLM gateway tests use `unittest.mock.patch("litellm.acompletion")` to avoid real API calls.
+- LangGraph subgraph tests should cover both the full pipeline path (`subgraph is not None`) and the graceful fallback path (`subgraph is None`). Patch individual nodes to avoid live HTTP calls while still exercising the StateGraph wiring.
 
 ---
 
@@ -187,11 +188,52 @@ uv init agents/my-expert --lib
 members = ["agents/my-expert", ...]
 ```
 
-3. Implement `BaseExpert` from `core.expert`:
+3. Implement the LangGraph subgraph in `agents/my-expert/src/my_expert/subgraph.py`:
+
+```python
+from __future__ import annotations
+
+try:
+    from langgraph.graph import END, START, StateGraph
+    _LANGGRAPH_AVAILABLE = True
+except ImportError:  # graceful degradation — bot still functions without langgraph
+    _LANGGRAPH_AVAILABLE = False
+    StateGraph = None
+    START = END = None
+
+from typing import TypedDict
+
+class MyExpertState(TypedDict):
+    query: str
+    context: str
+    response: str
+
+async def _fetch_node(state: MyExpertState) -> dict:
+    ...  # retrieve live data
+
+async def _synthesizer_node(state: MyExpertState) -> dict:
+    ...  # call LLM gateway
+
+if _LANGGRAPH_AVAILABLE:
+    _graph = StateGraph(MyExpertState)
+    _graph.add_node("fetcher", _fetch_node)
+    _graph.add_node("synthesizer", _synthesizer_node)
+    _graph.add_edge(START, "fetcher")
+    _graph.add_edge("fetcher", "synthesizer")
+    _graph.add_edge("synthesizer", END)
+    my_expert_subgraph = _graph.compile(name="my_expert")
+else:
+    my_expert_subgraph = None
+```
+
+Follow the pattern used by all existing experts: wrap the import in `try/except ImportError`, export `None` when unavailable, and check before invoking in `expert.process()`.
+
+4. Implement `BaseExpert` from `core.expert`, delegating to the subgraph:
 
 ```python
 from core.expert import BaseExpert
 from core.types import ExpertName, TaskRequest, TaskResult
+from .subgraph import my_expert_subgraph
 
 class MyExpert(BaseExpert):
     @property
@@ -199,6 +241,10 @@ class MyExpert(BaseExpert):
         return ExpertName.MY_EXPERT  # add to ExpertName enum in core/types.py
 
     async def process(self, task: TaskRequest) -> TaskResult:
+        if my_expert_subgraph is not None:
+            state = await my_expert_subgraph.ainvoke({"query": task.content, ...})
+            return TaskResult(content=state["response"])
+        # fallback: direct LLM call when LangGraph is unavailable
         ...
 
     async def morning_brief(self) -> str:
@@ -208,7 +254,7 @@ class MyExpert(BaseExpert):
         ...
 ```
 
-4. Register the expert in `agents/orchestrator/src/orchestrator/main.py` and add the intent mapping in `packages/router/src/router/classifier.py`.
+5. Register the expert in `agents/orchestrator/src/orchestrator/main.py` and add the intent mapping in `packages/router/src/router/classifier.py`.
 
 ---
 

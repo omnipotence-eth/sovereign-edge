@@ -205,13 +205,14 @@ This runs `rsync` to sync the project directory to the device (excluding `.git`,
 1. Send `/start` to your bot in Telegram — you should receive the welcome message.
 2. Send `/stats` to confirm the trace store is recording.
 3. Send a test message ("What's a good paper on LLM inference?") — verify the intelligence expert responds with a properly formatted reply.
-4. Check logs for structured JSON output:
+4. Confirm LangGraph subgraph pipelines are active by checking the startup logs for `"intelligence_expert"`, `"career_expert"`, `"creative_expert"`, and `"spiritual_expert"` compilation messages. If LangGraph is not installed, experts will log a warning and fall back to direct LLM calls — the bot remains functional but single-step only.
+5. Check logs for structured JSON output:
 
 ```bash
 journalctl -u telegram-bot -f | python3 -m json.tool
 ```
 
-5. At the configured morning wake time, verify the scheduled brief arrives.
+6. At the configured morning wake time, verify the scheduled brief arrives.
 
 ---
 

@@ -82,6 +82,7 @@ Bible API    Jina Search   arXiv +       Jina Search
 |---|---|
 | Runtime | Python 3.11+, asyncio |
 | Package management | uv (workspace) |
+| Agent orchestration | LangGraph (StateGraph subgraphs + director) |
 | LLM routing | LiteLLM 1.82.6 |
 | Cloud providers | Groq, Gemini, Cerebras, Mistral (all free tier) |
 | Local inference | Ollama (`qwen3:0.6b`) |
