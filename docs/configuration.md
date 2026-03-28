@@ -105,7 +105,7 @@ Daily token caps per provider are set in `packages/llm/src/llm/gateway.py` (`tpd
 | `SE_CREATIVE_ENABLED` | `true` | Enable the creative expert |
 | `SE_DEBUG_MODE` | `false` | Verbose debug logging — enable only during development |
 
-> **LangGraph dependency note:** LangGraph is installed as part of the workspace (`uv sync --all-packages`). When present, each expert runs as a compiled `StateGraph` subgraph with multi-node pipelines (fetch → rank/search → synthesize) and the director graph enables cross-expert chaining. If LangGraph is not installed, all experts fall back silently to single-step direct LLM calls — the bot remains fully functional in this degraded mode.
+> **LangGraph dependency note:** `uv sync --all-packages` (recommended) installs LangGraph (`langgraph>=1.0`) as part of the workspace. When present, each expert runs as a compiled `StateGraph` subgraph with multi-node pipelines (fetch → rank/search → synthesize) and the director graph enables cross-expert chaining. If you install with `uv sync` (minimal) or LangGraph is otherwise unavailable, all experts fall back silently to single-step direct LLM calls — the bot remains fully functional in this mode, but without multi-node pipelines or the director graph.
 
 ---
 

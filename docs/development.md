@@ -34,7 +34,7 @@ Minimum for local development:
 SE_TELEGRAM_BOT_TOKEN=your_token
 SE_TELEGRAM_OWNER_CHAT_ID=your_chat_id
 SE_GROQ_API_KEY=gsk_...          # or any single cloud key
-SE_OLLAMA_BASE_URL=http://localhost:11434
+SE_OLLAMA_HOST=http://localhost:11434
 ```
 
 ### Pull Ollama models

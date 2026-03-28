@@ -13,6 +13,8 @@ Sovereign Edge runs as a systemd service on a Jetson Orin or any Linux ARM64/x86
 - SOPS + Age for secrets management
 - `rsync` on the development machine (for deployment)
 
+> **LangGraph:** `uv sync --all-packages` installs `langgraph>=1.0` automatically. This is required for expert subgraph pipelines and the director graph. Running `uv sync` without `--all-packages` omits it; the bot functions but falls back to single-step LLM calls per expert.
+
 ---
 
 ## First-Time Setup
