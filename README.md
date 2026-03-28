@@ -80,7 +80,7 @@ Bible API    Jina Search   arXiv +       Jina Search
 
 | Layer | Technology |
 |---|---|
-| Runtime | Python 3.11, asyncio |
+| Runtime | Python 3.11+, asyncio |
 | Package management | uv (workspace) |
 | LLM routing | LiteLLM 1.82.6 |
 | Cloud providers | Groq, Gemini, Cerebras, Mistral (all free tier) |

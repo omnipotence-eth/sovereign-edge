@@ -28,7 +28,7 @@ Papers are de-duplicated across calls via a daily novelty filter — the same pa
 
 ### Morning Brief
 
-Runs at 05:30 Central. Fetches the latest papers from both sources in parallel, builds a digest of the top findings, and pushes it to Telegram. Scoped to 400 tokens to keep it scannable.
+Runs at 05:30 (configurable via `SE_MORNING_WAKE_HOUR` / `SE_TIMEZONE`). Fetches the latest papers from both sources in parallel, builds a digest of the top findings, and pushes it to Telegram. Scoped to 300 tokens to keep it scannable.
 
 ### Response Format
 
@@ -47,39 +47,28 @@ Why it matters for practitioners.
 
 **Intent:** `CAREER`
 
-A DFW-focused ML/AI career strategist with live access to job listings. Every response is grounded with real-time search results from Jina so job data, salary ranges, and company intel are current.
+An ML/AI career strategist with live access to job listings. Every response is grounded with real-time search results from Jina so job data, salary ranges, and company intel are current.
+
+Personalized via environment variables — see [Configuration](configuration.md#career-personalization).
 
 ### Live Data Sources
 
 | Source | What it fetches |
 |---|---|
-| Jina Search | LinkedIn and Indeed job listings for ML/AI roles in DFW |
+| Jina Search | Live job listings for target roles in target location |
 | Jina Search | Company news, salary data, market context |
 
 ### Capabilities
 
-- Job search: find and summarize open ML/AI roles in the DFW metro
+- Job search: find and summarize open roles matching `SE_CAREER_TARGET_ROLES`
 - Resume coaching: tailor language and keywords to a specific JD
 - Interview prep: behavioral and technical question practice
-- Market intelligence: DFW AI/ML hiring trends and salary ranges
+- Market intelligence: hiring trends and salary ranges for target location
 - Offer evaluation: total compensation analysis
-
-### Target Profile
-
-The expert is calibrated for the user's differentiators:
-
-- GRPO fine-tuning (DeepSeek-R1 method)
-- LangGraph multi-agent systems
-- MCP server development
-- vLLM / TensorRT-LLM production serving
-- Structured outputs and LLMOps
-- Blackwell GPU (RTX 5070 Ti) hands-on experience
-
-Top DFW target companies: Capital One (Plano), AT&T (Dallas), Sabre (Southlake), American Airlines (Fort Worth), JPMorgan Chase (Plano).
 
 ### Morning Brief
 
-Runs at 06:00 and 18:00 Central. Searches for new ML/AI openings in DFW, extracts the highest-value listing, and provides one concrete action to take that day. Scoped to 250 tokens.
+Runs at 06:00 and 18:00 (configurable via `SE_MORNING_WAKE_HOUR` / `SE_TIMEZONE`). Searches for new openings in the target location and roles, extracts the highest-value listing, and provides one concrete action to take that day. Scoped to 250 tokens.
 
 ---
 
@@ -106,7 +95,7 @@ A content strategist and creative director with live trend awareness. Grounds cr
 
 ### Morning Brief
 
-Runs at 07:00 Central. Searches for AI content creation and LinkedIn strategy trends, then generates one micro-challenge: a specific, actionable creative exercise completable in 15–20 minutes. Scoped to 150 tokens.
+Runs at 07:00 (configurable via `SE_MORNING_WAKE_HOUR` / `SE_TIMEZONE`). Searches for AI content creation and LinkedIn strategy trends, then generates one micro-challenge: a specific, actionable creative exercise completable in 15–20 minutes. Scoped to 150 tokens.
 
 ---
 
@@ -141,7 +130,7 @@ Scripture is always quoted in italics with full citation:
 
 ### Morning Brief
 
-Runs at 05:15 Central. Fetches a random verse, writes a brief morning devotional (verse + 2–3 sentences of reflection + one-sentence prayer), and pushes it to Telegram. Under 120 words.
+Runs at 05:15 (configurable via `SE_MORNING_WAKE_HOUR` / `SE_TIMEZONE`). Fetches a random verse, writes a brief morning devotional (verse + 2–3 sentences of reflection + one-sentence prayer), and pushes it to Telegram. Under 120 words.
 
 ---
 

@@ -6,12 +6,14 @@ Sovereign Edge is a monorepo of Python packages wired together into a single asy
 
 The system is designed around two principles: **graceful degradation** (every layer has a fallback) and **privacy by default** (PII is detected before routing and kept local).
 
+Each expert is a LangGraph subgraph with its own multi-node pipeline. A director graph coordinates multi-expert chains for queries that span domains.
+
 ---
 
 ## Request Flow
 
 ```
-User message (Telegram)
+User message (Telegram or Discord)
     │
     ├─ Input validation: length cap (2000 chars), rate limit (2s/chat)
     │
@@ -31,12 +33,17 @@ IntentRouter.aroute()  [3-tier classification]
 Orchestrator.dispatch()
     ├─ Inject conversation history (last 8 turns from SQLite)
     ├─ Semantic cache lookup (cosine similarity ≥ 0.92 → return cached)
-    └─ Route to expert by intent
+    │   └─ Cache skipped for INTELLIGENCE — always needs live papers
+    └─ Route to expert by intent (via DirectorGraph if enabled)
     │
     ▼
-Expert.process()
-    ├─ Fetch live data in parallel (arXiv + HF, or Jina, or Bible API)
-    └─ Build messages with system prompt + history + live context + user input
+Expert LangGraph subgraph
+    Intelligence:  arxiv_fetcher ─┐
+                   hf_fetcher   ──┴─► ranker ──► synthesizer
+    Career:        job_searcher ──► strategist
+    Creative:      trend_researcher ──► writer
+    Spiritual:     scripture_fetcher ──► theologian
+    (each subgraph falls back to a direct gateway call if LangGraph unavailable)
     │
     ▼
 LLMGateway.complete()
@@ -50,7 +57,7 @@ Orchestrator (post-dispatch)
     └─ Record trace (model, expert, tokens, latency, cost)
     │
     ▼
-Telegram reply (chunked at 4000 chars)
+Reply (chunked at 4000 chars for Telegram, 2000 chars for Discord)
 ```
 
 ---
@@ -109,6 +116,39 @@ PII detection runs before classification. If SSN, credit card, email, phone, or 
 
 ---
 
+## Expert Subgraphs
+
+Each expert is a compiled LangGraph `StateGraph`. The expert's `process()` method delegates to its subgraph and only falls back to a direct `LLMGateway.complete()` call if LangGraph is not installed.
+
+| Expert | Subgraph pipeline |
+|---|---|
+| **Intelligence** | `arxiv_fetcher` + `hf_fetcher` (parallel) → `ranker` (FlashRank cross-encoder) → `synthesizer` |
+| **Career** | `job_searcher` (Jina live search) → `strategist` (LLM synthesis) |
+| **Creative** | `trend_researcher` (Jina live search) → `writer` (LLM generation) |
+| **Spiritual** | `scripture_fetcher` (Bible API) → `theologian` (LLM devotional) |
+
+The Intelligence subgraph runs `arxiv_fetcher` and `hf_fetcher` in the same LangGraph superstep (true parallel execution). Both fetchers write to a shared `raw_papers` list via `operator.add` merge, then `ranker` waits for both before scoring.
+
+---
+
+## Director Graph
+
+The director (`agents/director/`) is a LangGraph `StateGraph` that enables multi-expert chaining — queries that span more than one domain. It uses a plan-and-execute pattern:
+
+```
+plan    — LLM decides which experts to invoke and in what order
+execute — runs each expert subgraph in sequence
+merge   — combines multi-expert outputs into a single response (when > 1 expert)
+```
+
+**Example multi-expert queries:**
+- *"Research the latest GRPO papers and write a LinkedIn post about them"* → Intelligence → Creative
+- *"Find ML engineer jobs at companies working on inference optimization"* → Intelligence → Career
+
+Single-expert queries resolve to one node with zero overhead — the director is not a bottleneck for normal use. The orchestrator enables the director via `Orchestrator(use_director=True)`.
+
+---
+
 ## Memory Layers
 
 ### Conversation History
@@ -124,7 +164,7 @@ Long-term episodic memory via Mem0. Requires the `mem0ai` optional dependency. E
 
 ## Morning Pipeline
 
-The orchestrator uses APScheduler to fire six cron jobs per day (Central Time):
+The orchestrator uses APScheduler to fire six cron jobs per day. Times are relative to `SE_MORNING_WAKE_HOUR` in the `SE_TIMEZONE` timezone (default: 05:00 US/Central):
 
 ```
 05:00  _morning_health_check    All experts pinged in parallel

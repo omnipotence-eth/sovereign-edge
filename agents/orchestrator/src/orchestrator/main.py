@@ -29,7 +29,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from core.config import get_settings, log_startup_warnings
 from core.expert import BaseExpert
-from core.types import Intent, RoutingDecision, ExpertName, TaskRequest, TaskResult
+from core.types import ExpertName, Intent, RoutingDecision, TaskRequest, TaskResult
 from observability.logging import get_logger, setup_logging
 from observability.traces import TraceStore
 
@@ -96,7 +96,7 @@ class Orchestrator:
                     new_ctx["history"] = history_json
                     request = request.model_copy(update={"context": new_ctx})
             except Exception:
-                logger.debug("conversation_history_inject_failed", exc_info=True)
+                logger.warning("conversation_history_inject_failed", exc_info=True)
 
         # ── 2. Semantic cache check ─────────────────────────────────────
         # Skip cache for INTELLIGENCE — research queries always want live data.
