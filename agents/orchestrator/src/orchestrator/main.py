@@ -230,7 +230,47 @@ class Orchestrator:
             except Exception:
                 logger.debug("stream_cache_lookup_failed", exc_info=True)
 
-        # ── 3. Resolve expert and stream ──────────────────────────────────
+        # ── 3a. Director path — non-streaming; yields final chunk ─────────
+        # Multi-expert chains (e.g. intelligence → creative) are inherently
+        # multi-step and cannot be streamed. We await the full result and
+        # yield it as one chunk so the Telegram placeholder still updates.
+        if self._director is not None:
+            result = await self._director.run(request)
+
+            if request.routing == RoutingDecision.CLOUD and not result.cached and request.intent != Intent.INTELLIGENCE:
+                try:
+                    from memory.semantic_cache import get_cache
+
+                    await get_cache().store(request.content, result.content, expert=str(result.expert))
+                except Exception:
+                    logger.debug("stream_cache_store_failed", exc_info=True)
+
+            if chat_id:
+                try:
+                    from memory.conversation import get_conversation_store
+
+                    store = get_conversation_store()
+                    store.add_turn(chat_id, "user", request.content)
+                    store.add_turn(chat_id, "assistant", result.content, expert=str(result.expert))
+                except Exception:
+                    logger.debug("stream_history_store_failed", exc_info=True)
+
+            if chat_id:
+                try:
+                    from memory.episodic import get_episodic_memory
+
+                    await get_episodic_memory().add_async(
+                        f"User: {request.content}\nAssistant: {result.content}",
+                        user_id=chat_id,
+                    )
+                except Exception:
+                    logger.debug("stream_episodic_add_failed", exc_info=True)
+
+            self._trace_store.record(result)
+            yield result.content
+            return
+
+        # ── 3b. Single-expert streaming path (director off / unavailable) ─
         expert_name = self._resolve_expert(request)
         expert = (
             self._experts.get(expert_name)
@@ -483,7 +523,7 @@ def _split_message(text: str, size: int) -> list[str]:
 
 async def run() -> None:
     setup_logging(debug=get_settings().debug_mode)
-    orchestrator = Orchestrator()
+    orchestrator = Orchestrator(use_director=True)
 
     loop = asyncio.get_running_loop()
     # Keep a reference to the shutdown task so it isn't garbage-collected mid-run
