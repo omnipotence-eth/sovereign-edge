@@ -8,6 +8,7 @@ dependencies = [
     "sovereign-edge-memory",
     "sovereign-edge-observability",
     "sovereign-edge-search",
+    "langgraph>=1.0,<2.0",
 ]
 
 [tool.uv.sources]

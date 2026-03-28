@@ -4,6 +4,10 @@ Director agent — LangGraph-powered multi-squad orchestrator.
 Replaces single-shot intent routing with a plan-and-execute graph that can
 chain squads when a query spans multiple domains.
 
+Each squad is now itself a LangGraph subgraph.  The director invokes them
+via node-wrapper functions (Pattern B / isolated state) so each squad's
+internal state remains fully encapsulated.
+
 Examples of multi-squad queries:
   "Research the latest GRPO papers and write a LinkedIn post about them"
   → intelligence (fetch + synthesise) → creative (draft the post)
@@ -16,7 +20,7 @@ resolves to one node and exits immediately.
 
 Graph nodes:
   plan      LLM decides the squad chain for this query
-  spiritual / career / intelligence / creative  squad execution nodes
+  execute   runs the next squad subgraph in the plan
   merge     combines multi-squad outputs into a final response (optional)
 
 Usage:
@@ -45,6 +49,7 @@ except ImportError:
     _LANGGRAPH_AVAILABLE = False
     StateGraph = None  # type: ignore[assignment,misc]
     END = None  # type: ignore[assignment]
+    from typing import TypedDict  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +126,7 @@ class DirectorGraph:
         self._graph = self._build_graph() if _LANGGRAPH_AVAILABLE else None
         if not _LANGGRAPH_AVAILABLE:
             logger.warning(
-                "director_langgraph_unavailable — install langgraph>=0.3 for multi-squad chains"
+                "director_langgraph_unavailable — install langgraph>=1.0 for multi-squad chains"
             )
 
     def _build_graph(self) -> Any:
@@ -157,7 +162,7 @@ class DirectorGraph:
                     {"role": "user", "content": request.content},
                 ],
                 max_tokens=200,
-                temperature=0.1,   # low temp — we want deterministic routing
+                temperature=0.1,
                 routing=RoutingDecision.CLOUD,
                 squad="director",
             )
@@ -180,7 +185,7 @@ class DirectorGraph:
             return {"plan": [fallback], "context_pass": False, "results": [], "error": ""}
 
     async def _execute_node(self, state: DirectorState) -> dict[str, Any]:
-        """Execute the next squad in the plan."""
+        """Execute the next squad in the plan via its subgraph or BaseSquad.process()."""
         plan = list(state["plan"])
         results = list(state.get("results", []))
 
@@ -193,18 +198,50 @@ class DirectorGraph:
             logger.warning("director_squad_missing squad=%s", squad_name)
             return {"plan": plan, "results": results}
 
-        # Build request — inject prior squad output as context when context_pass=True
+        # Inject prior squad output as context when context_pass=True
         request = state["request"]
         if state.get("context_pass") and results:
             prior_context = "\n\n---\nPrior squad output:\n" + results[-1]
-            # Append prior output to the user content so the squad sees it
             enriched_content = request.content + prior_context
             request = request.model_copy(update={"content": enriched_content})
 
+        # Try to invoke the squad's subgraph directly for richer observability
+        subgraph = _get_squad_subgraph(squad_name)
+        if subgraph is not None:
+            try:
+                import json as _json
+
+                history: list[dict[str, str]] = []
+                if history_json := request.context.get("history"):
+                    try:
+                        history = _json.loads(history_json)
+                    except (ValueError, TypeError):
+                        pass
+
+                squad_result = await subgraph.ainvoke(
+                    _build_squad_state(squad_name, request, history)
+                )
+                content = squad_result.get("response", "")
+                results.append(content)
+                logger.info(
+                    "director_execute squad=%s chars=%d via=subgraph",
+                    squad_name, len(content),
+                )
+                return {"plan": plan, "results": results}
+            except Exception:
+                logger.warning(
+                    "director_subgraph_invoke_failed squad=%s — falling back to squad.process()",
+                    squad_name, exc_info=True,
+                )
+
+        # Fallback: call squad.process() (e.g. LangGraph unavailable in squad package)
         try:
             result = await squad.process(request)
             results.append(result.content)
-            logger.info("director_execute squad=%s chars=%d", squad_name, len(result.content))
+            logger.info(
+                "director_execute squad=%s chars=%d via=process()",
+                squad_name, len(result.content),
+            )
         except Exception:
             logger.error("director_execute_failed squad=%s", squad_name, exc_info=True)
             results.append(f"[{squad_name} unavailable]")
@@ -220,9 +257,7 @@ class DirectorGraph:
         if len(results) == 1:
             return {"final_output": results[0]}
 
-        # Ask the LLM to weave outputs into a single coherent response
         gateway = get_gateway()
-        squad_names = []  # recover from original plan — it's been consumed, use results count
         merge_prompt = (
             "You have received outputs from multiple AI squads for a single user request. "
             "Weave them into ONE coherent, well-structured response. "
@@ -248,22 +283,18 @@ class DirectorGraph:
         """Route: continue executing squads, merge when done, or end on error."""
         if state.get("error"):
             return END
-        if state.get("plan"):          # more squads to execute
+        if state.get("plan"):
             return "continue"
         results = state.get("results", [])
-        if len(results) > 1:           # multiple outputs need merging
+        if len(results) > 1:
             return "merge"
-        return END                      # single output — skip merge node
+        return END
 
     # ── Public API ────────────────────────────────────────────────────────────
 
     async def run(self, request: TaskRequest) -> TaskResult:
-        """Execute the director graph and return a TaskResult.
-
-        Falls back to direct squad dispatch when LangGraph is unavailable.
-        """
+        """Execute the director graph and return a TaskResult."""
         if self._graph is None:
-            # LangGraph not installed — route directly
             squad_name = _intent_to_squad(request.intent)
             squad = self._squads.get(squad_name) or next(iter(self._squads.values()), None)
             if squad is None:
@@ -289,7 +320,6 @@ class DirectorGraph:
             final_state = await self._graph.ainvoke(initial_state)
         except Exception:
             logger.error("director_graph_failed", exc_info=True)
-            # Hard fallback — dispatch directly
             squad_name = _intent_to_squad(request.intent)
             squad = self._squads.get(squad_name) or next(iter(self._squads.values()), None)
             if squad:
@@ -342,3 +372,52 @@ def _extract_json(text: str) -> dict[str, Any]:
         return json.loads(text[start:end])
     except json.JSONDecodeError:
         return {}
+
+
+def _get_squad_subgraph(squad_name: str) -> Any | None:
+    """Return the compiled subgraph for a given squad name, or None."""
+    try:
+        if squad_name == SquadName.INTELLIGENCE:
+            from intelligence.subgraph import intelligence_subgraph
+            return intelligence_subgraph
+        if squad_name == SquadName.CAREER:
+            from career.subgraph import career_subgraph
+            return career_subgraph
+        if squad_name == SquadName.SPIRITUAL:
+            from spiritual.subgraph import spiritual_subgraph
+            return spiritual_subgraph
+        if squad_name == SquadName.CREATIVE:
+            from creative.subgraph import creative_subgraph
+            return creative_subgraph
+    except ImportError:
+        pass
+    return None
+
+
+def _build_squad_state(
+    squad_name: str,
+    request: TaskRequest,
+    history: list[dict[str, str]],
+) -> dict[str, Any]:
+    """Build the initial state dict for a squad subgraph invocation."""
+    base: dict[str, Any] = {
+        "query": request.content,
+        "routing": request.routing,
+        "history": history,
+        "is_morning_brief": False,
+        "response": "",
+        "model_used": "",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "cost_usd": 0.0,
+    }
+    # Squad-specific intermediate fields
+    if squad_name == SquadName.INTELLIGENCE:
+        base.update({"raw_papers": [], "ranked_papers": []})
+    elif squad_name == SquadName.CAREER:
+        base["search_results"] = ""
+    elif squad_name == SquadName.SPIRITUAL:
+        base["scripture"] = ""
+    elif squad_name == SquadName.CREATIVE:
+        base["trend_context"] = ""
+    return base

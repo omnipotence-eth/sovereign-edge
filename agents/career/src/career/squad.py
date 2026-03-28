@@ -1,79 +1,28 @@
 """
-Career squad — real-time job search, resume coaching, interview prep.
+Career squad — job search, resume coaching, interview prep.
 
-Grounds every response with live Jina web search so job listings,
-salaries, and company intel are always current.
+Delegates to ``career_subgraph`` (LangGraph) for the full pipeline:
+  job_searcher → strategist
+
+Falls back to a direct gateway call when LangGraph is unavailable.
 """
 
 from __future__ import annotations
 
 import time
 
-from core.config import get_settings
 from core.squad import BaseSquad
 from core.types import RoutingDecision, SquadName, TaskRequest, TaskResult
 from observability.logging import get_logger
 
+from career.subgraph import (
+    MORNING_PROMPT,
+    _build_search_queries,
+    _build_system_prompt,
+    career_subgraph,
+)
+
 logger = get_logger(__name__, component="career")
-
-_FORMAT_RULES = """\
-OUTPUT FORMAT — MANDATORY:
-Your responses are delivered via Telegram, which only renders a limited Markdown
-subset. You must follow these rules exactly or the output will be unreadable.
-
-ALLOWED:
-  *bold* using single asterisks — e.g. *Company Name*
-  _italic_ using underscores
-  [link text](https://url) — inline links only, never paste bare URLs
-
-FORBIDDEN — these render as literal characters in Telegram:
-  **double asterisks** — never use this for bold
-  ## headers — never use hash headers
-  --- dividers — never use horizontal rules
-
-Structure: one blank line between each job listing.
-Keep entries concise: company, title, location, salary, link.\
-"""
-
-
-def _build_system_prompt() -> str:
-    s = get_settings()
-    location = s.career_target_location
-    roles = s.career_target_roles
-    diff_section = (
-        f"\nEmphasize the user's differentiators: {s.career_differentiators}."
-        if s.career_differentiators
-        else ""
-    )
-    return (
-        f"{_FORMAT_RULES}\n\n---\n\n"
-        f"You are the Career Intelligence of Sovereign Edge — a world-class career strategist\n"
-        f"specializing in {roles} roles in the {location} area.\n\n"
-        f"You have access to live search results. When job listings are provided, extract and\n"
-        f"present: company name, role title, location, salary range (if shown), and a direct\n"
-        f"application link.{diff_section}\n\n"
-        f"Be direct, specific, and actionable. When no search results are available, draw on\n"
-        f"deep knowledge of the {location} ML/AI job market."
-    )
-
-
-def _build_job_search_queries() -> list[str]:
-    s = get_settings()
-    location = s.career_target_location
-    roles = s.career_target_roles.replace(", ", " OR ").replace(",", " OR ")
-    return [
-        f"{roles} {location} hiring site:linkedin.com OR site:indeed.com",
-        f"machine learning engineer jobs {location} remote apply now",
-    ]
-
-
-_MORNING_PROMPT = """\
-Based on the live job market data above, give a crisp morning career briefing (<= 150 words):
-1. One high-value action to take today (specific company to reach out to,
-   specific JD to apply for, etc.)
-2. One ML/AI market insight from the search results.
-Keep it motivating and concrete.\
-"""
 
 
 class CareerSquad(BaseSquad):
@@ -84,49 +33,84 @@ class CareerSquad(BaseSquad):
         return SquadName.CAREER
 
     async def process(self, task: TaskRequest) -> TaskResult:
+        t0 = time.monotonic()
+
+        if career_subgraph is not None:
+            return await self._process_via_subgraph(task, t0)
+        return await self._process_direct(task, t0)
+
+    async def _process_via_subgraph(self, task: TaskRequest, t0: float) -> TaskResult:
+        import json
+
+        history: list[dict[str, str]] = []
+        if history_json := task.context.get("history"):
+            try:
+                history = json.loads(history_json)
+            except (ValueError, TypeError):
+                pass
+
+        result = await career_subgraph.ainvoke({
+            "query": task.content,
+            "routing": task.routing,
+            "history": history,
+            "is_morning_brief": False,
+            "search_results": "",
+            "response": "",
+            "model_used": "",
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "cost_usd": 0.0,
+        })
+
+        return TaskResult(
+            task_id=task.task_id,
+            squad=SquadName.CAREER,
+            content=result["response"],
+            model_used=result["model_used"],
+            tokens_in=result["tokens_in"],
+            tokens_out=result["tokens_out"],
+            latency_ms=(time.monotonic() - t0) * 1000,
+            cost_usd=result["cost_usd"],
+            routing=task.routing,
+            metadata={"nodes": "job_searcher,strategist"},
+        )
+
+    async def _process_direct(self, task: TaskRequest, t0: float) -> TaskResult:
+        """Fallback: single LLM call when LangGraph is unavailable."""
+        import json
+
         from llm.gateway import get_gateway
         from search.jina import search as jina_search
 
         gateway = get_gateway()
-        t0 = time.monotonic()
-
-        # Ground with live search — only for cloud routing (never leak PII externally)
         search_context = ""
+
         if task.routing == RoutingDecision.CLOUD:
+            from core.config import get_settings
             location = get_settings().career_target_location
             search_context = await jina_search(
-                f"{task.content} ML Engineer AI job {location}",
-                max_results=5,
+                f"{task.content} ML Engineer AI job {location}", max_results=5,
             )
 
-        prior_turns: list[dict[str, str]] = []
+        history: list[dict[str, str]] = []
         if history_json := task.context.get("history"):
             try:
-                import json
-
-                prior_turns = json.loads(history_json)
+                history = json.loads(history_json)
             except (ValueError, TypeError):
                 pass
 
         user_input = f"<user_request>\n{task.content}\n</user_request>"
         messages = [
             {"role": "system", "content": _build_system_prompt()},
-            *prior_turns,
-            {
-                "role": "user",
-                "content": (
-                    f"Live search results:\n{search_context}\n\n---\n{user_input}"
-                    if search_context
-                    else user_input
-                ),
-            },
+            *history,
+            {"role": "user", "content": (
+                f"Live search results:\n{search_context}\n\n---\n{user_input}"
+                if search_context else user_input
+            )},
         ]
 
         result = await gateway.complete(
-            messages=messages,
-            max_tokens=1500,
-            routing=task.routing,
-            squad=self.name,
+            messages=messages, max_tokens=1500, routing=task.routing, squad=self.name,
         )
 
         return TaskResult(
@@ -142,24 +126,35 @@ class CareerSquad(BaseSquad):
         )
 
     async def morning_brief(self) -> str:
+        if career_subgraph is not None:
+            result = await career_subgraph.ainvoke({
+                "query": "",
+                "routing": RoutingDecision.CLOUD,
+                "history": [],
+                "is_morning_brief": True,
+                "search_results": "",
+                "response": "",
+                "model_used": "",
+                "tokens_in": 0,
+                "tokens_out": 0,
+                "cost_usd": 0.0,
+            })
+            return result["response"]
+
+        # Fallback
         from llm.gateway import get_gateway
         from search.jina import search as jina_search
 
         gateway = get_gateway()
-
-        job_context = await jina_search(_build_job_search_queries()[0], max_results=5)
+        job_context = await jina_search(_build_search_queries()[0], max_results=5)
 
         result = await gateway.complete(
             messages=[
                 {"role": "system", "content": _build_system_prompt()},
-                {
-                    "role": "user",
-                    "content": (
-                        f"Live DFW job market results:\n{job_context}\n\n---\n{_MORNING_PROMPT}"
-                        if job_context
-                        else _MORNING_PROMPT
-                    ),
-                },
+                {"role": "user", "content": (
+                    f"Live DFW job market results:\n{job_context}\n\n---\n{MORNING_PROMPT}"
+                    if job_context else MORNING_PROMPT
+                )},
             ],
             max_tokens=250,
             routing=RoutingDecision.CLOUD,
@@ -172,8 +167,7 @@ class CareerSquad(BaseSquad):
             from llm.gateway import get_gateway
 
             result = await get_gateway().complete(
-                messages=[{"role": "user", "content": "ping"}],
-                max_tokens=5,
+                messages=[{"role": "user", "content": "ping"}], max_tokens=5,
             )
             return bool(result.get("content"))
         except Exception:
