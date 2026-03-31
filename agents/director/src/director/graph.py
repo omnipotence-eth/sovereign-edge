@@ -447,7 +447,7 @@ def _build_expert_state(
     }
     # Expert-specific intermediate fields
     if expert_name == ExpertName.INTELLIGENCE:
-        base.update({"raw_papers": [], "ranked_papers": []})
+        base.update({"raw_papers": [], "ranked_papers": [], "repo_relevant_papers": []})
     elif expert_name == ExpertName.CAREER:
         base["search_results"] = ""
     elif expert_name == ExpertName.SPIRITUAL:

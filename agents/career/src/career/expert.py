@@ -12,7 +12,7 @@ from __future__ import annotations
 import time
 
 from core.expert import BaseExpert
-from core.types import RoutingDecision, ExpertName, TaskRequest, TaskResult
+from core.types import ExpertName, RoutingDecision, TaskRequest, TaskResult
 from observability.logging import get_logger
 
 from career.subgraph import (
@@ -87,9 +87,12 @@ class CareerExpert(BaseExpert):
 
         if task.routing == RoutingDecision.CLOUD:
             from core.config import get_settings
-            location = get_settings().career_target_location
+            s = get_settings()
+            location = s.career_target_location
             search_context = await jina_search(
-                f"{task.content} ML Engineer AI job {location}", max_results=5,
+                f'{task.content} ML Engineer AI job "{location}" OR "Dallas" OR "Plano" '
+                f'-"New York" -"San Francisco" -"Seattle"',
+                max_results=5,
             )
 
         history: list[dict[str, str]] = []

@@ -46,9 +46,14 @@ class Settings(BaseSettings):
     mistral_rpm: int = 2
 
     # Career Expert — override to target a different location/role
-    career_target_location: str = "your city or region"
+    career_target_location: str = "Dallas Fort Worth TX"
+    career_target_cities: str = "Dallas,Fort Worth,Plano,Irving,Frisco,Allen,McKinney,Richardson,Arlington,Southlake,Addison,Carrollton"
     career_target_roles: str = "ML Engineer, AI Engineer, LLM Engineer"
     career_differentiators: str = ""  # comma-separated; empty = generic coaching
+
+    # Intelligence Expert — comma-separated repo topics for paper relevance scoring
+    # e.g. "bible-ai:rag,orpo,fine-tuning,graphrag; sovereign-edge:langgraph,agents,mcp; gpu-suite:inference,tensorrt,vllm"
+    repo_topics: str = "bible-ai:rag,orpo,fine-tuning,graphrag,retrieval; sovereign-edge:langgraph,agents,mcp,tool-use; gpu-suite:inference,tensorrt,vllm,exllamav2,quantization,benchmark,cuda"
 
     # Feature Flags
     voice_enabled: bool = False

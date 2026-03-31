@@ -13,7 +13,7 @@ import asyncio
 import time
 
 from core.expert import BaseExpert
-from core.types import RoutingDecision, ExpertName, TaskRequest, TaskResult
+from core.types import ExpertName, RoutingDecision, TaskRequest, TaskResult
 from observability.logging import get_logger
 
 from intelligence.subgraph import (
@@ -50,19 +50,24 @@ class IntelligenceExpert(BaseExpert):
             except (ValueError, TypeError):
                 pass
 
-        result = await intelligence_subgraph.ainvoke({
-            "query": task.content,
-            "routing": task.routing,
-            "history": history,
-            "is_morning_brief": False,
-            "raw_papers": [],
-            "ranked_papers": [],
-            "response": "",
-            "model_used": "",
-            "tokens_in": 0,
-            "tokens_out": 0,
-            "cost_usd": 0.0,
-        })
+        try:
+            result = await intelligence_subgraph.ainvoke({
+                "query": task.content,
+                "routing": task.routing,
+                "history": history,
+                "is_morning_brief": False,
+                "raw_papers": [],
+                "ranked_papers": [],
+                "repo_relevant_papers": [],
+                "response": "",
+                "model_used": "",
+                "tokens_in": 0,
+                "tokens_out": 0,
+                "cost_usd": 0.0,
+            })
+        except Exception:
+            logger.warning("intel_subgraph_invoke_failed — falling back to direct", exc_info=True)
+            return await self._process_direct(task, t0)
 
         return TaskResult(
             task_id=task.task_id,
@@ -150,20 +155,25 @@ class IntelligenceExpert(BaseExpert):
 
     async def morning_brief(self) -> str:
         if intelligence_subgraph is not None:
-            result = await intelligence_subgraph.ainvoke({
-                "query": "",
-                "routing": RoutingDecision.CLOUD,
-                "history": [],
-                "is_morning_brief": True,
-                "raw_papers": [],
-                "ranked_papers": [],
-                "response": "",
-                "model_used": "",
-                "tokens_in": 0,
-                "tokens_out": 0,
-                "cost_usd": 0.0,
-            })
-            return result["response"]
+            try:
+                result = await intelligence_subgraph.ainvoke({
+                    "query": "",
+                    "routing": RoutingDecision.CLOUD,
+                    "history": [],
+                    "is_morning_brief": True,
+                    "raw_papers": [],
+                    "ranked_papers": [],
+                    "repo_relevant_papers": [],
+                    "response": "",
+                    "model_used": "",
+                    "tokens_in": 0,
+                    "tokens_out": 0,
+                    "cost_usd": 0.0,
+                })
+                return result["response"]
+            except Exception:
+                logger.warning("intel_morning_brief_subgraph_failed — falling back to direct", exc_info=True)
+                # fall through to direct path below
 
         # Fallback
         from llm.gateway import get_gateway

@@ -116,6 +116,59 @@ class BriefOutput(BaseModel):
         return self
 
 
+# ── Structured output models ──────────────────────────────────────────────────
+
+class PaperEntry(BaseModel):
+    """One paper in the intelligence brief."""
+
+    title: str = Field(description="Full paper title")
+    url: str = Field(description="Direct arXiv or HuggingFace link")
+    key_finding: str = Field(description="1-2 sentence summary of the key result or technique")
+    repos_matched: list[str] = Field(
+        default_factory=list,
+        description="Names of local repos this paper is relevant to, if any",
+    )
+
+
+class IntelBriefResponse(BaseModel):
+    """Structured intelligence brief — 3-5 papers + highlights."""
+
+    papers: list[PaperEntry] = Field(description="Top 3-5 papers from the research data")
+    technique_highlight: str = Field(
+        default="",
+        description="One fine-tuning or inference technique worth knowing today (1 sentence)",
+    )
+    actionable_insight: str = Field(
+        default="",
+        description="One concrete thing to try or watch for this week (1 sentence)",
+    )
+
+
+def format_intel_brief(brief: IntelBriefResponse, repo_relevant: list[dict]) -> str:
+    """Render an IntelBriefResponse as Telegram-safe numbered markdown."""
+    # Build a fast lookup: title → repos from the ranker's annotations
+    ranker_repos: dict[str, list[str]] = {
+        p.get("title", ""): p.get("repos", []) for p in repo_relevant
+    }
+
+    lines: list[str] = []
+    for i, paper in enumerate(brief.papers, 1):
+        # Prefer repos from ranker annotation; fall back to LLM-supplied
+        repos = ranker_repos.get(paper.title) or paper.repos_matched
+        repo_tag = f" → _{', '.join(repos)}_" if repos else ""
+        lines.append(f"{i}. *{paper.title}*{repo_tag}")
+        lines.append(paper.key_finding)
+        lines.append(f"[Read →]({paper.url})")
+        lines.append("")
+
+    if brief.technique_highlight:
+        lines.append(f"*Technique:* {brief.technique_highlight}")
+    if brief.actionable_insight:
+        lines.append(f"*Try this:* {brief.actionable_insight}")
+
+    return "\n".join(lines).strip()
+
+
 # ── State ─────────────────────────────────────────────────────────────────────
 
 class IntelligenceState(TypedDict):
@@ -128,6 +181,8 @@ class IntelligenceState(TypedDict):
     # operator.add merges parallel writes from arxiv_fetcher + hf_fetcher
     raw_papers: Annotated[list[dict], operator.add]
     ranked_papers: list[dict]
+    # papers that match at least one local repo — subset of ranked_papers
+    repo_relevant_papers: list[dict]
     # ── Outputs ───────────────────────────────────────────────────────────
     response: str
     model_used: str
@@ -189,7 +244,47 @@ def _get_flashrank() -> Any:
         except ImportError:
             _flashrank_ranker = False
             logger.debug("intel_flashrank_unavailable — using keyword fallback")
+        except Exception:
+            # Catches model download failures, ONNX runtime errors, /tmp permission issues
+            _flashrank_ranker = False
+            logger.warning("intel_flashrank_init_failed — using keyword fallback", exc_info=True)
     return _flashrank_ranker if _flashrank_ranker else None
+
+
+def _parse_repo_topics() -> dict[str, list[str]]:
+    """Parse SE_REPO_TOPICS into {repo_name: [keyword, ...]} dict.
+
+    Format: "repo-name:kw1,kw2; repo2:kw3,kw4"
+    """
+    try:
+        from core.config import get_settings
+        raw = get_settings().repo_topics.strip()
+    except Exception:
+        return {}
+    result: dict[str, list[str]] = {}
+    for segment in raw.split(";"):
+        segment = segment.strip()
+        if ":" not in segment:
+            continue
+        name, _, kws = segment.partition(":")
+        keywords = [k.strip().lower() for k in kws.split(",") if k.strip()]
+        if name.strip() and keywords:
+            result[name.strip()] = keywords
+    return result
+
+
+def _score_paper_for_repos(paper: dict, repo_topics: dict[str, list[str]]) -> list[str]:
+    """Return a list of repo names whose keywords appear in the paper's text.
+
+    A paper is considered relevant to a repo when at least one of its
+    configured keywords matches in the title or summary.
+    """
+    text = (paper.get("title", "") + " " + paper.get("summary", "")).lower()
+    matched: list[str] = []
+    for repo, keywords in repo_topics.items():
+        if any(kw in text for kw in keywords):
+            matched.append(repo)
+    return matched
 
 
 def _ranker(state: IntelligenceState) -> dict[str, Any]:
@@ -198,10 +293,15 @@ def _ranker(state: IntelligenceState) -> dict[str, Any]:
     Uses FlashRank cross-encoder when available (recommended). Falls back to
     keyword counting when flashrank is not installed or the query is empty.
     Install: uv add flashrank  (adds ~4 MB ONNX model on first run).
+
+    Also annotates each paper with ``repos`` — a list of local repo names
+    that match the paper's content, enabling paper→repo relevance in the brief.
     """
     papers = state["raw_papers"]
     if not papers:
-        return {"ranked_papers": []}
+        return {"ranked_papers": [], "repo_relevant_papers": []}
+
+    repo_topics = _parse_repo_topics()
 
     ranker = _get_flashrank()
     if ranker is not None and state.get("query"):
@@ -220,19 +320,40 @@ def _ranker(state: IntelligenceState) -> dict[str, Any]:
             top_ids = [r["id"] for r in results[:8]]
             ranked = [papers[i] for i in top_ids]
             logger.info("intel_ranker_flashrank input=%d top=%d", len(papers), len(ranked))
-            return {"ranked_papers": ranked}
         except Exception:  # graceful fallback to keyword scorer
             logger.warning("intel_ranker_flashrank_failed — falling back to keyword", exc_info=True)
+            ranked = _keyword_rank(papers)
+    else:
+        ranked = _keyword_rank(papers)
 
-    # Keyword fallback
+    # Annotate each ranked paper with matching repo names (non-destructive copy)
+    repo_relevant: list[dict] = []
+    annotated: list[dict] = []
+    for paper in ranked:
+        matched_repos = _score_paper_for_repos(paper, repo_topics) if repo_topics else []
+        annotated_paper = {**paper, "repos": matched_repos}
+        annotated.append(annotated_paper)
+        if matched_repos:
+            repo_relevant.append(annotated_paper)
+
+    logger.info(
+        "intel_ranker_repo_hits papers=%d repo_relevant=%d",
+        len(annotated),
+        len(repo_relevant),
+    )
+    return {"ranked_papers": annotated, "repo_relevant_papers": repo_relevant}
+
+
+def _keyword_rank(papers: list[dict]) -> list[dict]:
+    """Rank papers by keyword hit count. Returns top 8."""
     def _score(paper: dict) -> int:
         text = (paper.get("title", "") + " " + paper.get("summary", "")).lower()
         return sum(1 for kw in _RELEVANCE_KEYWORDS if kw in text)
 
-    ranked_kw = sorted(papers, key=_score, reverse=True)
-    top = ranked_kw[:8]
+    ranked = sorted(papers, key=_score, reverse=True)
+    top = ranked[:8]
     logger.info("intel_ranker_keyword input=%d top=%d", len(papers), len(top))
-    return {"ranked_papers": top}
+    return top
 
 
 async def _synthesizer(state: IntelligenceState) -> dict[str, Any]:
@@ -253,20 +374,29 @@ async def _synthesizer(state: IntelligenceState) -> dict[str, Any]:
         except Exception:
             logger.warning("intel_format_papers_failed", exc_info=True)
 
+    # Build repo-relevance annotation block
+    repo_context = ""
+    if state.get("repo_relevant_papers"):
+        lines: list[str] = ["Papers that match your local repos:"]
+        for p in state["repo_relevant_papers"]:
+            repos = ", ".join(p.get("repos", []))
+            lines.append(f"  • {p.get('title', '')} → [{repos}]")
+        repo_context = "\n".join(lines)
+
     if state["is_morning_brief"]:
-        user_content = (
-            f"Live research data:\n{research_context}\n\n---\n{MORNING_PROMPT}"
-            if research_context
-            else MORNING_PROMPT
-        )
-        max_tokens = 300
+        parts = ["Live research data:\n" + research_context] if research_context else []
+        if repo_context:
+            parts.append(repo_context)
+        parts.append(MORNING_PROMPT)
+        user_content = "\n\n---\n".join(parts)
+        max_tokens = 400  # bumped from 300 to fit repo-relevance section
     else:
         user_input = f"<user_request>\n{state['query']}\n</user_request>"
-        user_content = (
-            f"Live research data:\n{research_context}\n\n---\n{user_input}"
-            if research_context
-            else user_input
-        )
+        parts = ["Live research data:\n" + research_context] if research_context else []
+        if repo_context:
+            parts.append(repo_context)
+        parts.append(user_input)
+        user_content = "\n\n---\n".join(parts)
         max_tokens = 2048
 
     messages: list[dict[str, str]] = [
@@ -275,6 +405,27 @@ async def _synthesizer(state: IntelligenceState) -> dict[str, Any]:
         {"role": "user", "content": user_content},
     ]
 
+    # ── Structured path (instructor + Pydantic) ────────────────────────────
+    structured = await gateway.complete_structured(
+        messages=messages,
+        response_model=IntelBriefResponse,
+        routing=state["routing"],
+        max_tokens=max_tokens,
+        temperature=0.3,
+        expert="intelligence",
+    )
+    if structured is not None:
+        logger.info("intel_synthesizer_structured papers=%d", len(structured.papers))
+        return {
+            "response": format_intel_brief(structured, state.get("repo_relevant_papers", [])),
+            "model_used": "structured",
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "cost_usd": 0.0,
+        }
+
+    # ── Unstructured fallback ──────────────────────────────────────────────
+    logger.warning("intel_synthesizer_structured_failed — falling back to unstructured")
     result = await gateway.complete(
         messages=messages,
         max_tokens=max_tokens,

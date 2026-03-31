@@ -75,6 +75,20 @@ def _cache_get(key: str) -> str | None:
 
 def _cache_set(key: str, value: str) -> None:
     _search_cache[key] = (value, time.monotonic() + _CACHE_TTL)
+    # Evict expired entries on every 50th write to prevent unbounded dict growth.
+    # Without this, unique daily queries accumulate since _cache_get only
+    # evicts on read — entries never queried again stay forever.
+    if len(_search_cache) % 50 == 0:
+        _evict_expired()
+
+
+def _evict_expired() -> None:
+    now = time.monotonic()
+    expired = [k for k, (_, exp) in _search_cache.items() if now >= exp]
+    for k in expired:
+        del _search_cache[k]
+    if expired:
+        logger.debug("jina_cache_evicted count=%d remaining=%d", len(expired), len(_search_cache))
 
 
 # Private IP ranges — SSRF guard for fetch()

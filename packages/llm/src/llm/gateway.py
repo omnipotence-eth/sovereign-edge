@@ -21,10 +21,14 @@ import time
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from datetime import date
+from typing import TypeVar
 
 import litellm
 from core.config import get_settings
 from core.types import RoutingDecision
+from pydantic import BaseModel
+
+_ModelT = TypeVar("_ModelT", bound=BaseModel)
 
 litellm.set_verbose = False  # type: ignore[attr-defined]
 litellm.suppress_debug_info = True  # type: ignore[attr-defined]
@@ -298,6 +302,138 @@ class LLMGateway:
         logger.warning("all_stream_providers_failed falling_back=local")
         result = await self._call_local(messages, max_tokens, temperature, expert)
         yield result["content"]
+
+    async def complete_structured(
+        self,
+        messages: list[dict[str, str]],
+        response_model: type[_ModelT],
+        routing: RoutingDecision = RoutingDecision.CLOUD,
+        max_tokens: int = 1024,
+        temperature: float = 0.3,
+        expert: str = "general",
+    ) -> _ModelT | None:
+        """Like complete(), but returns a validated Pydantic model via instructor.
+
+        Uses function-calling / JSON mode to guarantee schema compliance regardless
+        of provider. Falls back through the same provider chain as complete().
+        Returns None if all providers fail — callers should fall back to complete().
+        """
+        try:
+            import instructor
+        except ImportError:
+            logger.warning("instructor_not_installed — structured output unavailable")
+            return None
+
+        if routing == RoutingDecision.LOCAL:
+            return await self._call_local_structured(
+                messages, response_model, max_tokens, temperature, expert
+            )
+
+        sort_key = (
+            (lambda p: 1 if "mistral" in p.model else p.priority)
+            if _is_simple_query(messages)
+            else (lambda p: p.priority)
+        )
+
+        for provider in sorted(self._providers, key=sort_key):
+            if self.tracker.get(provider.model) >= provider.tpd:
+                continue
+            if not await self._buckets[provider.model].acquire():
+                continue
+
+            result = await self._call_structured_with_retry(
+                provider, messages, response_model, max_tokens, temperature, expert, instructor
+            )
+            if result is not None:
+                return result
+
+        logger.warning("all_structured_providers_failed — returning None for fallback")
+        return None
+
+    async def _call_structured_with_retry(
+        self,
+        provider: ProviderConfig,
+        messages: list[dict[str, str]],
+        response_model: type[_ModelT],
+        max_tokens: int,
+        temperature: float,
+        expert: str,
+        instructor_module: Any,
+    ) -> _ModelT | None:
+        """Attempt one provider with instructor validation. Returns None to try next."""
+        client = instructor_module.from_litellm(litellm.acompletion)
+
+        for attempt in range(_MAX_RETRIES):
+            try:
+                start = time.monotonic()
+                result = await client.chat.completions.create(
+                    model=provider.model,
+                    messages=messages,
+                    response_model=response_model,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    max_retries=2,  # instructor-level validation retries
+                    timeout=30,
+                )
+                elapsed = (time.monotonic() - start) * 1000
+                logger.info(
+                    "structured_response model=%s expert=%s latency_ms=%.1f",
+                    provider.model, expert, elapsed,
+                )
+                return result
+
+            except litellm.RateLimitError:  # type: ignore[attr-defined]
+                delay = _RETRY_BASE_DELAY * (2**attempt)
+                logger.warning("structured_rate_limited model=%s attempt=%d", provider.model, attempt + 1)
+                await asyncio.sleep(delay)
+
+            except litellm.AuthenticationError:  # type: ignore[attr-defined]
+                logger.warning("structured_auth_failed model=%s", provider.model)
+                return None
+
+            except (litellm.ServiceUnavailableError, TimeoutError, litellm.Timeout):  # type: ignore[attr-defined]
+                delay = _RETRY_BASE_DELAY * (2**attempt)
+                logger.warning("structured_provider_unavailable model=%s attempt=%d", provider.model, attempt + 1)
+                await asyncio.sleep(delay)
+
+            except Exception:
+                logger.warning(
+                    "structured_provider_failed model=%s attempt=%d",
+                    provider.model, attempt + 1, exc_info=True,
+                )
+                return None
+
+        return None
+
+    async def _call_local_structured(
+        self,
+        messages: list[dict[str, str]],
+        response_model: type[_ModelT],
+        max_tokens: int,
+        temperature: float,
+        expert: str,
+    ) -> _ModelT | None:
+        """Attempt structured output from local Ollama using JSON mode."""
+        try:
+            import instructor
+            client = instructor.from_litellm(
+                litellm.acompletion, mode=instructor.Mode.JSON
+            )
+            result = await client.chat.completions.create(
+                model=LOCAL_FALLBACK_MODEL,
+                messages=messages,
+                response_model=response_model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                max_retries=1,
+                timeout=120,
+                api_base=self.settings.ollama_host,
+            )
+            logger.info("local_structured_response expert=%s", expert)
+            return result
+        except Exception:
+            logger.warning("local_structured_failed expert=%s", expert, exc_info=True)
+            return None
 
     async def _call_with_retry(
         self,
