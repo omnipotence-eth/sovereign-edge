@@ -249,7 +249,7 @@ class SovereignEdgeBot:
         # Still dispatches so they get an answer; the hint improves future routing.
         if intent.value == "GENERAL" and confidence <= LOW_CONFIDENCE_THRESHOLD:
             await update.message.reply_text(
-                "🤔 _Not sure which expert fits this — routing to intelligence._\n"
+                "🤔 <i>Not sure which expert fits this — routing to intelligence.</i>\n"
                 "For better results try: Bible/faith · job search · AI research · content creation",
                 parse_mode="HTML",
             )

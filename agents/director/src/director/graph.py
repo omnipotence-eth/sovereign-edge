@@ -46,7 +46,7 @@ from llm.gateway import get_gateway
 from pydantic import BaseModel, ValidationError, field_validator
 
 try:
-    from langgraph.graph import END, StateGraph
+    from langgraph.graph import END, START, StateGraph
 
     _LANGGRAPH_AVAILABLE = True
 except ImportError:
@@ -159,7 +159,7 @@ class DirectorGraph:
         graph.add_node("execute", self._execute_node)
         graph.add_node("merge", self._merge_node)
 
-        graph.set_entry_point("plan")
+        graph.add_edge(START, "plan")
         graph.add_edge("plan", "execute")
         graph.add_conditional_edges(
             "execute",
@@ -409,7 +409,12 @@ def _extract_json(text: str) -> dict[str, Any]:
 
 
 def _get_expert_subgraph(expert_name: str) -> Any | None:
-    """Return the compiled subgraph for a given expert name, or None."""
+    """Return the compiled subgraph for a given expert name, or None.
+
+    Catches all exceptions (not just ImportError) so a NameError or other
+    module-level failure in a subgraph doesn't propagate into the director
+    execute node — it degrades gracefully to expert.process() instead.
+    """
     try:
         if expert_name == ExpertName.INTELLIGENCE:
             from intelligence.subgraph import intelligence_subgraph
@@ -423,8 +428,8 @@ def _get_expert_subgraph(expert_name: str) -> Any | None:
         if expert_name == ExpertName.CREATIVE:
             from creative.subgraph import creative_subgraph
             return creative_subgraph
-    except ImportError:
-        pass
+    except Exception:
+        logger.warning("subgraph_import_failed expert=%s", expert_name, exc_info=True)
     return None
 
 

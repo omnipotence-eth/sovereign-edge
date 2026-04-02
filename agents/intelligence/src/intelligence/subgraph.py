@@ -26,7 +26,7 @@ import operator
 import re
 from typing import Annotated, Any
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 try:
     from typing import TypedDict
