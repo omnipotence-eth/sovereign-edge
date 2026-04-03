@@ -11,7 +11,7 @@ dist/
 build/
 
 # uv
-uv.lock
+# uv.lock is intentionally committed — required for reproducible Jetson builds
 .uv/
 
 # Secrets (never commit plaintext)
