@@ -4,7 +4,8 @@ import structlog
 from core.config import Settings, get_settings
 from core.exceptions import ConfigurationError
 from observability import setup_observability
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from orchestrator.graph import resume_turn, run_turn
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -18,7 +19,7 @@ from telegram_bot.scheduler import build_scheduler
 
 logger = structlog.get_logger(__name__)
 
-# Maps thread_id → pending HITL state for resume
+# Maps user_id → thread_id for pending HITL approvals
 _PENDING_HITL: dict[str, str] = {}
 
 
@@ -26,16 +27,24 @@ def _check_auth(user_id: int, settings: Settings) -> bool:
     return user_id == settings.telegram_allowed_user_id
 
 
+def _require_message(update: Update) -> Message | None:
+    """Return update.message if present; callers should return early if None."""
+    return update.message
+
+
 # ── Command handlers ──────────────────────────────────────────────────────────
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = _require_message(update)
+    if msg is None:
+        return
     settings = get_settings()
     if not update.effective_user or not _check_auth(update.effective_user.id, settings):
-        await update.message.reply_text("Unauthorized.")  # type: ignore[union-attr]
+        await msg.reply_text("Unauthorized.")
         return
-    await update.message.reply_text(  # type: ignore[union-attr]
-        "👋 Sovereign Edge online.\n\n"
+    await msg.reply_text(
+        "Sovereign Edge online.\n\n"
         "Ask me anything — Bible questions, job leads, market data, or creative help.\n"
         "Type /help for commands.",
         parse_mode="Markdown",
@@ -43,6 +52,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = _require_message(update)
+    if msg is None:
+        return
     text = (
         "*Sovereign Edge Commands*\n\n"
         "/start — Wake up the system\n"
@@ -54,87 +66,98 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/reject — Reject pending HITL action\n"
         "/help — This message"
     )
-    await update.message.reply_text(text, parse_mode="Markdown")  # type: ignore[union-attr]
+    await msg.reply_text(text, parse_mode="Markdown")
 
 
 async def cmd_brief(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = _require_message(update)
+    if msg is None:
+        return
     settings = get_settings()
     if not update.effective_user or not _check_auth(update.effective_user.id, settings):
         return
-    await update.message.reply_text("⏳ Generating morning brief...")  # type: ignore[union-attr]
-    from orchestrator.graph import run_turn  # type: ignore[import]
-
+    await msg.reply_text("Generating morning brief...")
     result = await run_turn(
         "Generate morning brief: Bible verse, market summary, top job leads.",
         thread_id=f"brief_{update.effective_user.id}",
         schedule_trigger="manual_brief",
     )
-    await update.message.reply_text(result, parse_mode="Markdown")  # type: ignore[union-attr]
+    await msg.reply_text(result, parse_mode="Markdown")
 
 
 async def cmd_jobs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = _require_message(update)
+    if msg is None:
+        return
     settings = get_settings()
     if not update.effective_user or not _check_auth(update.effective_user.id, settings):
         return
-    await update.message.reply_text("⏳ Scanning job boards...")  # type: ignore[union-attr]
-    from agents.career import CareerSquad  # type: ignore[import]
+    await msg.reply_text("Scanning job boards...")
+    from career import CareerSquad
 
     result = await CareerSquad().daily_job_scan()
     text = result or "No new DFW job postings in the last 48 hours."
-    await update.message.reply_text(text, parse_mode="Markdown")  # type: ignore[union-attr]
+    await msg.reply_text(text, parse_mode="Markdown")
 
 
 async def cmd_market(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = _require_message(update)
+    if msg is None:
+        return
     settings = get_settings()
     if not update.effective_user or not _check_auth(update.effective_user.id, settings):
         return
-    from agents.intelligence import IntelligenceSquad  # type: ignore[import]
+    from intelligence import IntelligenceSquad
 
     result = await IntelligenceSquad().daily_market_summary()
-    text = result or "No watchlist alerts today."
-    await update.message.reply_text(text, parse_mode="Markdown")  # type: ignore[union-attr]
+    await msg.reply_text(result or "No watchlist alerts today.", parse_mode="Markdown")
 
 
 async def cmd_digest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = _require_message(update)
+    if msg is None:
+        return
     settings = get_settings()
     if not update.effective_user or not _check_auth(update.effective_user.id, settings):
         return
-    await update.message.reply_text("⏳ Building research digest...")  # type: ignore[union-attr]
-    from agents.intelligence import IntelligenceSquad  # type: ignore[import]
+    await msg.reply_text("Building research digest...")
+    from intelligence import IntelligenceSquad
 
     result = await IntelligenceSquad().weekly_digest()
-    await update.message.reply_text(result, parse_mode="Markdown")  # type: ignore[union-attr]
+    await msg.reply_text(result, parse_mode="Markdown")
 
 
 # ── HITL approval handlers ────────────────────────────────────────────────────
 
 
 async def cmd_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = _require_message(update)
+    if msg is None:
+        return
     settings = get_settings()
     if not update.effective_user or not _check_auth(update.effective_user.id, settings):
         return
     thread_id = _PENDING_HITL.pop(str(update.effective_user.id), None)
     if not thread_id:
-        await update.message.reply_text("No pending action to approve.")  # type: ignore[union-attr]
+        await msg.reply_text("No pending action to approve.")
         return
-    from orchestrator.graph import resume_turn  # type: ignore[import]
-
     result = await resume_turn(thread_id, approved=True)
-    await update.message.reply_text(f"✅ Approved.\n\n{result}", parse_mode="Markdown")  # type: ignore[union-attr]
+    await msg.reply_text(f"Approved.\n\n{result}", parse_mode="Markdown")
 
 
 async def cmd_reject(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = _require_message(update)
+    if msg is None:
+        return
     settings = get_settings()
     if not update.effective_user or not _check_auth(update.effective_user.id, settings):
         return
     thread_id = _PENDING_HITL.pop(str(update.effective_user.id), None)
     if not thread_id:
-        await update.message.reply_text("No pending action to reject.")  # type: ignore[union-attr]
+        await msg.reply_text("No pending action to reject.")
         return
-    from orchestrator.graph import resume_turn  # type: ignore[import]
-
     await resume_turn(thread_id, approved=False)
-    await update.message.reply_text("❌ Action cancelled.")  # type: ignore[union-attr]
+    await msg.reply_text("Action cancelled.")
 
 
 async def hitl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -152,58 +175,57 @@ async def hitl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     action, thread_id = query.data.split(":", 1)
     _PENDING_HITL.pop(str(user_id), None)
 
-    from orchestrator.graph import resume_turn  # type: ignore[import]
-
     approved = action == "approve"
     result = await resume_turn(thread_id, approved=approved)
 
-    icon = "✅" if approved else "❌"
     label = "Approved" if approved else "Cancelled"
-    await query.edit_message_text(f"{icon} {label}.\n\n{result}", parse_mode="Markdown")
+    await query.edit_message_text(f"{label}.\n\n{result}", parse_mode="Markdown")
 
 
 # ── Main message handler ──────────────────────────────────────────────────────
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    msg = _require_message(update)
+    if msg is None:
+        return
     settings = get_settings()
     if not update.effective_user or not _check_auth(update.effective_user.id, settings):
-        await update.message.reply_text("Unauthorized.")  # type: ignore[union-attr]
+        await msg.reply_text("Unauthorized.")
         return
 
-    text = update.message.text or ""  # type: ignore[union-attr]
+    text = msg.text or ""
     user_id = update.effective_user.id
     thread_id = f"user_{user_id}"
 
     logger.info("telegram.message", user_id=user_id, length=len(text))
     await context.bot.send_chat_action(chat_id=user_id, action="typing")
 
-    from orchestrator.graph import run_turn  # type: ignore[import]
-
     result = await run_turn(text, thread_id=thread_id)
 
-    # Check if graph paused at HITL
     if result == "" and thread_id not in _PENDING_HITL:
-        # Graph suspended — present HITL keyboard
         _PENDING_HITL[str(user_id)] = thread_id
-        keyboard = InlineKeyboardMarkup([
+        keyboard = InlineKeyboardMarkup(
             [
-                InlineKeyboardButton("✅ Approve", callback_data=f"approve:{thread_id}"),
-                InlineKeyboardButton("❌ Reject", callback_data=f"reject:{thread_id}"),
+                [
+                    InlineKeyboardButton("Approve", callback_data=f"approve:{thread_id}"),
+                    InlineKeyboardButton("Reject", callback_data=f"reject:{thread_id}"),
+                ]
             ]
-        ])
-        await update.message.reply_text(  # type: ignore[union-attr]
-            "⚠️ This action requires your approval. Review and confirm:",
+        )
+        await msg.reply_text(
+            "This action requires your approval. Review and confirm:",
             reply_markup=keyboard,
         )
     else:
-        await update.message.reply_text(result or "Done.", parse_mode="Markdown")  # type: ignore[union-attr]
+        await msg.reply_text(result or "Done.", parse_mode="Markdown")
 
 
 # ── Bot entry point ───────────────────────────────────────────────────────────
 
 
-async def run_bot() -> None:
+def run_bot() -> None:
+    """Start the Telegram bot (blocking — manages its own event loop)."""
     settings = get_settings()
     setup_observability(settings)
 
@@ -229,4 +251,4 @@ async def run_bot() -> None:
     scheduler.start()
 
     logger.info("telegram.bot_starting")
-    await app.run_polling(drop_pending_updates=True)
+    app.run_polling(drop_pending_updates=True)

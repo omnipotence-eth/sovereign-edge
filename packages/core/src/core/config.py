@@ -38,9 +38,19 @@ class Settings(BaseSettings):
     job_target_location: str = "Dallas Fort Worth TX"
     job_target_cities: list[str] = Field(
         default_factory=lambda: [
-            "Dallas", "Fort Worth", "Plano", "Irving", "Arlington",
-            "Frisco", "McKinney", "Allen", "Richardson", "Carrollton",
-            "Southlake", "Grapevine", "Addison",
+            "Dallas",
+            "Fort Worth",
+            "Plano",
+            "Irving",
+            "Arlington",
+            "Frisco",
+            "McKinney",
+            "Allen",
+            "Richardson",
+            "Carrollton",
+            "Southlake",
+            "Grapevine",
+            "Addison",
         ]
     )
     resume_path: Path = Path.home() / "Documents" / "Job Search"

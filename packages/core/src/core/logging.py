@@ -30,9 +30,7 @@ def configure_logging(json: bool = False, level: str = "INFO") -> None:
             *shared_processors,
             structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
-        wrapper_class=structlog.make_filtering_bound_logger(
-            logging.getLevelName(level)
-        ),
+        wrapper_class=structlog.make_filtering_bound_logger(logging.getLevelName(level)),
         context_class=dict,
         logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,

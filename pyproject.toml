@@ -13,7 +13,7 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "S", "B", "UP", "ANN"]
 
-[tool.ty]
+[tool.ty.environment]
 python-version = "3.11"
 
 [tool.pytest.ini_options]

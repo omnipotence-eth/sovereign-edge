@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 import litellm
 import structlog
@@ -20,7 +20,7 @@ logger = structlog.get_logger(__name__)
 litellm.set_verbose = False
 logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 
-type Role = Literal["system", "user", "assistant"]
+Role: TypeAlias = Literal["system", "user", "assistant"]
 
 
 class Message:
@@ -63,7 +63,7 @@ class LLMGateway:
         system: str | None = None,
         max_tokens: int = 1024,
         temperature: float = 0.7,
-        **kwargs: Any,
+        **kwargs: Any,  # noqa: ANN401
     ) -> str:
         providers = self._settings.active_llm_providers()
         if not providers:
@@ -104,7 +104,7 @@ class LLMGateway:
         stop=stop_after_attempt(3),
         reraise=True,
     )
-    async def _call_with_retry(self, **kwargs: Any) -> Any:
+    async def _call_with_retry(self, **kwargs: Any) -> Any:  # noqa: ANN401
         return await litellm.acompletion(**kwargs)
 
     async def complete_structured(

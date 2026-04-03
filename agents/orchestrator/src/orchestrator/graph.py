@@ -4,6 +4,7 @@ import structlog
 from core.config import get_settings
 from core.types import IntentClass
 from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.runnables.config import RunnableConfig
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
@@ -45,35 +46,35 @@ async def router_node(state: SovereignState) -> dict:
 
 
 async def spiritual_node(state: SovereignState) -> dict:
-    from agents.spiritual import SpiritualSquad  # type: ignore[import]
+    from spiritual import SpiritualSquad
 
     squad = SpiritualSquad()
-    result = await squad.run(state)
+    result = await squad.run(state)  # type: ignore
     return {"squad_result": result, "hitl_required": False}
 
 
 async def career_node(state: SovereignState) -> dict:
-    from agents.career import CareerSquad  # type: ignore[import]
+    from career import CareerSquad
 
     squad = CareerSquad()
-    result = await squad.run(state)
+    result = await squad.run(state)  # type: ignore
     # Career actions (apply, send email) always require HITL
     return {"squad_result": result, "hitl_required": True}
 
 
 async def intelligence_node(state: SovereignState) -> dict:
-    from agents.intelligence import IntelligenceSquad  # type: ignore[import]
+    from intelligence import IntelligenceSquad
 
     squad = IntelligenceSquad()
-    result = await squad.run(state)
+    result = await squad.run(state)  # type: ignore
     return {"squad_result": result, "hitl_required": False}
 
 
 async def creative_node(state: SovereignState) -> dict:
-    from agents.creative import CreativeSquad  # type: ignore[import]
+    from creative import CreativeSquad
 
     squad = CreativeSquad()
-    result = await squad.run(state)
+    result = await squad.run(state)  # type: ignore
     # Publishing / posting requires HITL
     return {"squad_result": result, "hitl_required": True}
 
@@ -144,8 +145,8 @@ def _route_hitl(state: SovereignState) -> str:
 # ── Graph assembly ────────────────────────────────────────────────────────────
 
 
-def build_graph() -> StateGraph:
-    g = StateGraph(SovereignState)
+def build_graph() -> StateGraph:  # type: ignore
+    g = StateGraph(SovereignState)  # type: ignore
 
     g.add_node("router", router_node)
     g.add_node("spiritual", spiritual_node)
@@ -193,8 +194,8 @@ async def run_turn(
 
     Returns the assistant's final response text.
     """
-    config = {"configurable": {"thread_id": thread_id}}
-    initial: SovereignState = {  # type: ignore[typeddict-item]
+    config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+    initial: SovereignState = {  # type: ignore
         "messages": [HumanMessage(content=user_text)],
         "intent": "",
         "intent_confidence": 0.0,
@@ -204,7 +205,7 @@ async def run_turn(
         "hitl_approved": None,
         "schedule_trigger": schedule_trigger,
     }
-    result = await _compiled.ainvoke(initial, config)
+    result = await _compiled.ainvoke(initial, config)  # type: ignore
     messages = result.get("messages", [])
     if messages:
         last = messages[-1]
@@ -214,8 +215,8 @@ async def run_turn(
 
 async def resume_turn(thread_id: str, *, approved: bool) -> str:
     """Resume a graph suspended at the HITL interrupt."""
-    config = {"configurable": {"thread_id": thread_id}}
-    result = await _compiled.ainvoke(
+    config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+    result = await _compiled.ainvoke(  # type: ignore
         {"hitl_approved": approved},
         config,
     )

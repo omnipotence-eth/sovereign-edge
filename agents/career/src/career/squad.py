@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
-
 import structlog
 from core.config import get_settings
+from core.types import SquadState
 from llm.gateway import LLMGateway, Message
 
 from career.scraper import format_listings, scrape_jobs
@@ -30,7 +29,8 @@ Rules:
 """
 
 _TAILOR_PROMPT = """Given the job description below, rewrite the provided resume bullets to match
-the JD's language and requirements. Only use skills John actually has. Output as markdown bullet list.
+the JD's language and requirements. Only use skills John actually has.
+Output as markdown bullet list.
 
 JD:
 {jd}
@@ -45,7 +45,7 @@ class CareerSquad:
         self._llm = LLMGateway()
         self._settings = get_settings()
 
-    async def run(self, state: Any) -> str:
+    async def run(self, state: SquadState) -> str:
         messages = state.get("messages", [])
         last = messages[-1] if messages else None
         query = str(last.content) if last and hasattr(last, "content") else ""
@@ -132,10 +132,12 @@ class CareerSquad:
             return ""
         listing_text = format_listings(dfw, limit=5)
         return await self._llm.complete(
-            [Message.user(
-                f"New DFW job postings from the last 48 hours:\n{listing_text}\n\n"
-                "Give a 2-sentence briefing on the best opportunity."
-            )],
+            [
+                Message.user(
+                    f"New DFW job postings from the last 48 hours:\n{listing_text}\n\n"
+                    "Give a 2-sentence briefing on the best opportunity."
+                )
+            ],
             system=_SYSTEM_PROMPT,
             max_tokens=200,
         )

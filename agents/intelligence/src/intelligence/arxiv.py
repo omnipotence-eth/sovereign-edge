@@ -77,9 +77,7 @@ async def get_hf_daily_papers(*, limit: int = 5) -> list[Paper]:
                 papers.append(
                     Paper(
                         title=p.get("title", ""),
-                        authors=", ".join(
-                            a.get("name", "") for a in p.get("authors", [])[:3]
-                        ),
+                        authors=", ".join(a.get("name", "") for a in p.get("authors", [])[:3]),
                         abstract=p.get("summary", "")[:300],
                         url=f"https://arxiv.org/abs/{p.get('id', '')}",
                         published=p.get("publishedAt", ""),
@@ -95,7 +93,7 @@ async def get_hf_daily_papers(*, limit: int = 5) -> list[Paper]:
 async def get_research_digest(queries: list[str] | None = None) -> list[Paper]:
     """Aggregate papers from arXiv + HF Papers for weekly digest."""
     all_papers: list[Paper] = []
-    for q in (queries or _DEFAULT_QUERIES):
+    for q in queries or _DEFAULT_QUERIES:
         all_papers.extend(await search_arxiv(q, max_results=3))
     all_papers.extend(await get_hf_daily_papers(limit=5))
     # Deduplicate by title

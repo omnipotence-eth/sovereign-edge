@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
-
 import structlog
+from core.types import SquadState
 from llm.gateway import LLMGateway, Message
 
 logger = structlog.get_logger(__name__)
@@ -29,7 +28,7 @@ class CreativeSquad:
     def __init__(self) -> None:
         self._llm = LLMGateway()
 
-    async def run(self, state: Any) -> str:
+    async def run(self, state: SquadState) -> str:
         messages = state.get("messages", [])
         last = messages[-1] if messages else None
         query = str(last.content) if last and hasattr(last, "content") else ""

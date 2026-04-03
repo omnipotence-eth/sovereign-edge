@@ -25,7 +25,7 @@ def traced(span_name: str | None = None) -> Callable[[F], F]:
         name = span_name or fn.__qualname__
 
         @functools.wraps(fn)
-        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
             tracer = get_tracer(_SERVICE_NAME)
             correlation_id = str(uuid.uuid4())
             structlog.contextvars.bind_contextvars(correlation_id=correlation_id)
@@ -34,7 +34,7 @@ def traced(span_name: str | None = None) -> Callable[[F], F]:
                 return await fn(*args, **kwargs)
 
         @functools.wraps(fn)
-        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
             tracer = get_tracer(_SERVICE_NAME)
             correlation_id = str(uuid.uuid4())
             structlog.contextvars.bind_contextvars(correlation_id=correlation_id)
@@ -45,8 +45,8 @@ def traced(span_name: str | None = None) -> Callable[[F], F]:
         import asyncio
 
         if asyncio.iscoroutinefunction(fn):
-            return async_wrapper  # type: ignore[return-value]
-        return sync_wrapper  # type: ignore[return-value]
+            return async_wrapper  # type: ignore
+        return sync_wrapper  # type: ignore
 
     return decorator
 

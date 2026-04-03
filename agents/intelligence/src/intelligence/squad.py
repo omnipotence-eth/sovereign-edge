@@ -1,16 +1,12 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
 import structlog
 from core.config import get_settings
+from core.types import SquadState
 from llm.gateway import LLMGateway, Message
 
 from intelligence.arxiv import format_digest, get_hf_daily_papers, get_research_digest
 from intelligence.market import format_market_summary, get_quotes, get_watchlist_alerts
-
-if TYPE_CHECKING:
-    pass
 
 logger = structlog.get_logger(__name__)
 
@@ -29,7 +25,7 @@ class IntelligenceSquad:
         self._llm = LLMGateway()
         self._settings = get_settings()
 
-    async def run(self, state: Any) -> str:
+    async def run(self, state: SquadState) -> str:
         messages = state.get("messages", [])
         last = messages[-1] if messages else None
         query = last.content if last and hasattr(last, "content") else ""
@@ -118,8 +114,9 @@ class IntelligenceSquad:
         """Scheduled: weekly — called by APScheduler."""
         papers = await get_research_digest()
         digest_text = format_digest(papers)
+        prompt = f"Generate a weekly AI research digest from these papers:\n{digest_text}"
         return await self._llm.complete(
-            [Message.user(f"Generate a weekly AI research digest from these papers:\n{digest_text}")],
+            [Message.user(prompt)],
             system=_SYSTEM_PROMPT,
             max_tokens=1200,
         )

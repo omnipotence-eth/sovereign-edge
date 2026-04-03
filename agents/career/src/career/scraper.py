@@ -33,7 +33,7 @@ async def scrape_jobs(
 ) -> list[JobListing]:
     """Scrape jobs from LinkedIn, Indeed, Glassdoor via JobSpy."""
     try:
-        from jobspy import scrape_jobs as jobspy_scrape  # type: ignore[import]
+        from jobspy import scrape_jobs as jobspy_scrape  # type: ignore
     except ImportError:
         logger.warning("career.scraper.jobspy_not_installed")
         return []

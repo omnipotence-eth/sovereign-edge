@@ -9,9 +9,10 @@ from core.exceptions import (
     RouterError,
     SovereignError,
 )
-from core.types import IntentClass, RouterResult
+from core.types import IntentClass, RouterResult, SquadState
 
 __all__ = [
+    "SquadState",
     "Settings",
     "get_settings",
     "IntentClass",

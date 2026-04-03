@@ -43,7 +43,7 @@ class BibleRAG:
     def _get_embedder(self) -> object:
         if self._embedder is None:
             try:
-                import ollama
+                import ollama  # type: ignore
 
                 self._embedder = ollama
             except ImportError:
@@ -51,12 +51,12 @@ class BibleRAG:
         return self._embedder
 
     def _embed(self, text: str) -> list[float] | None:
-        ollama = self._get_embedder()
-        if ollama is None:
+        embedder = self._get_embedder()
+        if embedder is None:
             return None
         try:
-            resp = ollama.embeddings(model=self._EMBED_MODEL, prompt=text)
-            return resp["embedding"]
+            resp = embedder.embeddings(model=self._EMBED_MODEL, prompt=text)  # type: ignore
+            return resp["embedding"]  # type: ignore[index]
         except Exception:
             logger.error("spiritual.rag.embed_failed", exc_info=True)
             return None

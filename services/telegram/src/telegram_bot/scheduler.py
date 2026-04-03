@@ -83,7 +83,7 @@ async def _morning_brief(bot: Bot, user_id: int) -> None:
 
 
 async def _job_scan(bot: Bot, user_id: int) -> None:
-    from agents.career import CareerSquad  # type: ignore[import]
+    from career import CareerSquad
 
     logger.info("scheduler.job_scan")
     result = await CareerSquad().daily_job_scan()
@@ -92,7 +92,7 @@ async def _job_scan(bot: Bot, user_id: int) -> None:
 
 
 async def _market_summary(bot: Bot, user_id: int) -> None:
-    from agents.intelligence import IntelligenceSquad  # type: ignore[import]
+    from intelligence import IntelligenceSquad
 
     logger.info("scheduler.market_summary")
     result = await IntelligenceSquad().daily_market_summary()
@@ -101,7 +101,7 @@ async def _market_summary(bot: Bot, user_id: int) -> None:
 
 
 async def _research_digest(bot: Bot, user_id: int) -> None:
-    from agents.intelligence import IntelligenceSquad  # type: ignore[import]
+    from intelligence import IntelligenceSquad
 
     logger.info("scheduler.research_digest")
     result = await IntelligenceSquad().weekly_digest()
