@@ -137,21 +137,20 @@ class SovereignEdgeBot:
         """Push a proactive message to the owner (used by morning briefs)."""
         if not (self._app and self._settings.telegram_owner_chat_id):
             return
+        # Sanitize to valid HTML before sending — prevents parse errors from
+        # LLM output containing bare & / < / > characters (e.g. "AT&T"), which
+        # would cause Telegram to reject the message.  No retry after this
+        # because a retry risks double-delivery when a network timeout fires
+        # after Telegram has already processed the first send.
+        clean = _sanitize_markdown(text)
         try:
             await self._app.bot.send_message(
                 chat_id=self._settings.telegram_owner_chat_id,
-                text=text,
+                text=clean,
                 parse_mode="HTML",
             )
         except Exception:
-            logger.warning("telegram_markdown_failed — retrying as plain text")
-            try:
-                await self._app.bot.send_message(
-                    chat_id=self._settings.telegram_owner_chat_id,
-                    text=text,
-                )
-            except Exception:
-                logger.error("telegram_send_failed", exc_info=True)
+            logger.error("telegram_send_failed", exc_info=True)
 
     # ------------------------------------------------------------------ #
     # Commands                                                             #

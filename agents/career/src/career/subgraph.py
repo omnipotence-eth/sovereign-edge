@@ -10,6 +10,7 @@ strategist    — LLM synthesizes search results into career advice / brief
 
 from __future__ import annotations
 
+import datetime
 import logging
 from typing import Any
 
@@ -155,9 +156,15 @@ def build_system_prompt() -> str:
         f"OR jobs explicitly marked remote/hybrid that are open to {location} candidates.\n"
         f"HARD RULE: Do not list jobs in other cities (NYC, SF, Seattle, etc.) unless remote.\n\n"
         f"You have access to live search results. For each job listing extract and present:\n"
-        f"company name, role title, city/state, salary (if shown), direct application link.{diff_section}\n\n"
+        f"company name, role title, city/state, salary (if shown), and an application link.{diff_section}\n\n"
+        f"LINK PRIORITY — LinkedIn and Indeed job URLs expire within days of the position being filled.\n"
+        f"Use this priority order for apply_url:\n"
+        f"  1. Company's own careers page (careers.company.com, company.com/careers) — most stable\n"
+        f"  2. Direct ATS link (greenhouse.io, lever.co, workday.com, icims.com) — stable\n"
+        f"  3. LinkedIn or Indeed URL — only if no stable link is available\n"
+        f"If only a LinkedIn/Indeed URL is found, still include it but note it may have expired.\n\n"
         f"When no search results are available, share 2-3 known {location} ML/AI employers\n"
-        f"actively hiring and the best way to apply."
+        f"actively hiring and link directly to their careers pages."
     )
 
 
@@ -167,10 +174,14 @@ def build_search_queries() -> list[str]:
     s = get_settings()
     location = s.career_target_location
     roles = s.career_target_roles.replace(", ", " OR ").replace(",", " OR ")
-    # Use specific DFW city names for tighter location filtering
+    # Include current year/month so search engines surface recent postings.
+    # LinkedIn/Indeed deep-link URLs expire when a position is filled;
+    # the freshness signal biases results toward live listings.
+    today = datetime.date.today()
+    freshness = f"{today.year}-{today.month:02d}"
     return [
-        f'("{roles}") ("{location}" OR "Dallas" OR "Plano" OR "Irving" OR "Frisco") site:linkedin.com OR site:indeed.com',
-        f'machine learning engineer AI engineer "{location}" OR "Dallas TX" OR "Plano TX" jobs -"New York" -"San Francisco" -"Seattle"',
+        f'("{roles}") ("{location}" OR "Dallas" OR "Plano" OR "Irving" OR "Frisco") hiring {freshness} -filled -expired',
+        f'machine learning engineer AI engineer "{location}" OR "Dallas TX" OR "Plano TX" jobs {today.year} -"New York" -"San Francisco" -"Seattle"',
     ]
 
 
@@ -209,10 +220,11 @@ async def _job_searcher(state: CareerState) -> dict[str, Any]:
             from core.config import get_settings
             s = get_settings()
             location = s.career_target_location
-            # Tighten location filter: exclude known non-DFW metros
+            year = datetime.date.today().year
+            # Tighten location filter and add year for freshness
             query = (
                 f'{state["query"]} ML Engineer AI job "{location}" OR "Dallas" OR "Plano" OR "Irving" '
-                f'-"New York" -"San Francisco" -"Chicago" -"Seattle" -"Austin"'
+                f'{year} -"New York" -"San Francisco" -"Chicago" -"Seattle" -"Austin" -filled -expired'
             )
 
         results = await jina_search(query, max_results=5)

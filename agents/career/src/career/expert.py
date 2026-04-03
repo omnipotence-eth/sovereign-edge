@@ -9,6 +9,7 @@ Falls back to a direct gateway call when LangGraph is unavailable.
 
 from __future__ import annotations
 
+import datetime
 import time
 
 from core.expert import BaseExpert
@@ -89,9 +90,10 @@ class CareerExpert(BaseExpert):
             from core.config import get_settings
             s = get_settings()
             location = s.career_target_location
+            year = datetime.date.today().year
             search_context = await jina_search(
                 f'{task.content} ML Engineer AI job "{location}" OR "Dallas" OR "Plano" '
-                f'-"New York" -"San Francisco" -"Seattle"',
+                f'{year} -"New York" -"San Francisco" -"Seattle" -filled -expired',
                 max_results=5,
             )
 
