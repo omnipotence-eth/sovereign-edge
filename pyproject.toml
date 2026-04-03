@@ -16,6 +16,10 @@ select = ["E", "F", "W", "I", "S", "B", "UP", "ANN"]
 [tool.ty]
 python-version = "3.11"
 
+[tool.pytest.ini_options]
+addopts = "--tb=short -q"
+testpaths = ["packages", "agents", "services", "evals"]
+
 [tool.bandit]
 exclude_dirs = ["tests", ".venv"]
 skips = ["B101"]  # allow assert in tests

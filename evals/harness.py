@@ -4,6 +4,7 @@ evals/harness.py — pytest-based eval runner for all squads.
 Run with: uv run python evals/harness.py
 Or: task eval
 """
+
 from __future__ import annotations
 
 import argparse

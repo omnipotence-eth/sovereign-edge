@@ -1,20 +1,20 @@
 [project]
-name = "sovereign-edge-router"
+name = "sovereign-edge-telegram"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
-    "onnxruntime>=1.18,<2.0",
-    "numpy>=1.26,<3.0",
-    "transformers>=4.44,<5.0",
+    "python-telegram-bot>=21.0,<22.0",
     "sovereign-edge-core",
+    "sovereign-edge-observability",
 ]
 
 [tool.uv.sources]
 sovereign-edge-core = { workspace = true }
+sovereign-edge-observability = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/router"]
+packages = ["src/telegram"]
