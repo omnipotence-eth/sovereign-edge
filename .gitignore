@@ -42,3 +42,9 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Personal / interview prep — not for public repo
+interview_notes/
+personal/
+*_personal_notes*
+study/

@@ -49,9 +49,9 @@ tasks:
       - uv run ruff format .
 
   typecheck:
-    desc: Run mypy across all packages
+    desc: Run ty type checker across all packages (Astral — faster than mypy)
     cmds:
-      - uv run mypy packages/ agents/ services/
+      - uv run ty check packages/ agents/ services/
 
   test:
     desc: Run all tests

@@ -13,9 +13,8 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "S", "B", "UP", "ANN"]
 
-[tool.mypy]
-python_version = "3.11"
-strict = true
+[tool.ty]
+python-version = "3.11"
 
 [tool.bandit]
 exclude_dirs = ["tests", ".venv"]

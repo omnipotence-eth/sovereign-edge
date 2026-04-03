@@ -3,8 +3,40 @@
 ---
 
 ## Orchestrator
-**Runtime:** NemoClaw/OpenClaw (or Pydantic AI fallback)
-**Responsibility:** Route incoming requests, manage proactive loops, aggregate squad outputs for delivery.
+**Runtime:** LangGraph `StateGraph`
+**Responsibility:** Receive ONNX router output, dispatch to specialist squad nodes, persist session state via checkpointing, enforce HITL approval gates, and deliver aggregated responses via Telegram.
+
+### Graph State
+```python
+class SovereignState(TypedDict):
+    messages: list[BaseMessage]       # full conversation history
+    intent: str                       # ONNX router classification
+    intent_confidence: float          # router confidence score
+    memory_context: str               # Mem0 retrieved context
+    squad_result: str                 # output from active squad node
+    hitl_required: bool               # True = pause for Telegram approval
+    hitl_approved: bool | None        # None = pending, True/False = resolved
+    schedule_trigger: str | None      # APScheduler job ID if proactive
+```
+
+### Graph Structure
+```
+router_node
+    │  (conditional: route by intent)
+    ├──▶ spiritual_node
+    ├──▶ career_node
+    ├──▶ intelligence_node
+    └──▶ creative_node
+              │
+         memory_node  (write result to Mem0 + LanceDB)
+              │
+         hitl_node    (interrupt if hitl_required=True)
+              │
+         delivery_node (Telegram send)
+```
+
+### HITL Pattern
+LangGraph's `interrupt()` mechanism pauses graph execution at `hitl_node` and resumes only after the user sends an approval reply in Telegram. This implements the approval gates defined in SOUL.md with no polling loop.
 
 ---
 
