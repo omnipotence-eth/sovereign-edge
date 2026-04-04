@@ -86,8 +86,8 @@ class VoicePipeline:
         """Play a short acknowledgement while the LLM processes."""
         try:
             self._tts.speak("One moment.")
-        except Exception:
-            pass  # Non-critical — silence is fine
+        except Exception:  # noqa: S110
+            pass  # Non-critical — silence is fine if TTS thinking prompt fails
 
     async def run_single_turn(self, *, use_wake_word: bool = True) -> str | None:
         """Execute one full interaction cycle.

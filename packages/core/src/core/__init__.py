@@ -4,9 +4,9 @@ from core.config import Settings, get_settings
 from core.expert import BaseExpert
 from core.security import sanitize_input
 from core.types import (
+    ExpertName,
     Intent,
     RoutingDecision,
-    ExpertName,
     TaskPriority,
     TaskRequest,
     TaskResult,
@@ -14,10 +14,10 @@ from core.types import (
 
 __all__ = [
     "BaseExpert",
+    "ExpertName",
     "Intent",
     "RoutingDecision",
     "Settings",
-    "ExpertName",
     "TaskPriority",
     "TaskRequest",
     "TaskResult",
