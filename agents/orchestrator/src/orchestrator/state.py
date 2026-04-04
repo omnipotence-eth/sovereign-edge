@@ -12,6 +12,7 @@ class SovereignState(TypedDict):
     intent: str  # IntentClass.value
     intent_confidence: float
     memory_context: str  # Mem0 retrieved context injected into squad
+    skill_context: str  # Top-ranked skill patterns for this intent (3rd-tier memory)
     squad_result: str  # raw output from the active squad node
     hitl_required: bool  # True = pause for Telegram approval
     hitl_approved: bool | None  # None=pending, True=approved, False=rejected

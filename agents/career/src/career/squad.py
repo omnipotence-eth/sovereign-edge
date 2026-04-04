@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import structlog
 from core.config import get_settings
+from core.security import sanitize_input
 from core.types import SquadState
 from llm.gateway import LLMGateway, Message
 
@@ -48,21 +49,28 @@ class CareerSquad:
     async def run(self, state: SquadState) -> str:
         messages = state.get("messages", [])
         last = messages[-1] if messages else None
-        query = str(last.content) if last and hasattr(last, "content") else ""
+        raw_query = str(last.content) if last and hasattr(last, "content") else ""
+        query = sanitize_input(raw_query)
         memory_ctx = state.get("memory_context", "")
+        skill_ctx = state.get("skill_context", "")
 
         query_lower = query.lower()
 
         if any(kw in query_lower for kw in ("resume", "tailor", "cv", "bullets")):
-            return await self._tailor_task(query, memory_ctx)
+            return await self._tailor_task(query, memory_ctx, skill_ctx)
         elif any(kw in query_lower for kw in ("cover letter", "application")):
-            return await self._cover_letter_task(query, memory_ctx)
+            return await self._cover_letter_task(query, memory_ctx, skill_ctx)
         elif any(kw in query_lower for kw in ("interview", "prep", "question")):
-            return await self._interview_prep_task(query, memory_ctx)
+            return await self._interview_prep_task(query, memory_ctx, skill_ctx)
         else:
-            return await self._job_search_task(query, memory_ctx)
+            return await self._job_search_task(query, memory_ctx, skill_ctx)
 
-    async def _job_search_task(self, query: str, memory_ctx: str) -> str:
+    def _build_system(self, skill_ctx: str) -> str:
+        if not skill_ctx:
+            return _SYSTEM_PROMPT
+        return f"{_SYSTEM_PROMPT}\n**Proven approaches:**\n{skill_ctx}"
+
+    async def _job_search_task(self, query: str, memory_ctx: str, skill_ctx: str) -> str:
         listings = await scrape_jobs(
             self._settings.job_target_roles,
             self._settings.job_target_location,
@@ -78,11 +86,11 @@ class CareerSquad:
         )
         return await self._llm.complete(
             [Message.user(user_content)],
-            system=_SYSTEM_PROMPT,
+            system=self._build_system(skill_ctx),
             max_tokens=800,
         )
 
-    async def _tailor_task(self, query: str, memory_ctx: str) -> str:
+    async def _tailor_task(self, query: str, memory_ctx: str, skill_ctx: str) -> str:
         user_content = (
             f"{memory_ctx}\n\n"
             f"Request: {query}\n\n"
@@ -90,11 +98,11 @@ class CareerSquad:
         )
         return await self._llm.complete(
             [Message.user(user_content)],
-            system=_SYSTEM_PROMPT,
+            system=self._build_system(skill_ctx),
             max_tokens=1000,
         )
 
-    async def _cover_letter_task(self, query: str, memory_ctx: str) -> str:
+    async def _cover_letter_task(self, query: str, memory_ctx: str, skill_ctx: str) -> str:
         user_content = (
             f"{memory_ctx}\n\n"
             f"Request: {query}\n\n"
@@ -103,11 +111,11 @@ class CareerSquad:
         )
         return await self._llm.complete(
             [Message.user(user_content)],
-            system=_SYSTEM_PROMPT,
+            system=self._build_system(skill_ctx),
             max_tokens=600,
         )
 
-    async def _interview_prep_task(self, query: str, memory_ctx: str) -> str:
+    async def _interview_prep_task(self, query: str, memory_ctx: str, skill_ctx: str) -> str:
         user_content = (
             f"{memory_ctx}\n\n"
             f"Request: {query}\n\n"
@@ -116,7 +124,7 @@ class CareerSquad:
         )
         return await self._llm.complete(
             [Message.user(user_content)],
-            system=_SYSTEM_PROMPT,
+            system=self._build_system(skill_ctx),
             max_tokens=1000,
         )
 

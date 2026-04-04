@@ -9,6 +9,7 @@ from core.exceptions import (
     RouterError,
     SovereignError,
 )
+from core.security import sanitize_input
 from core.types import IntentClass, RouterResult, SquadState
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "MemoryError",
     "RouterError",
     "AgentError",
+    "sanitize_input",
 ]

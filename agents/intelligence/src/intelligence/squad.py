@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import structlog
 from core.config import get_settings
+from core.security import sanitize_input
 from core.types import SquadState
 from llm.gateway import LLMGateway, Message
 
 from intelligence.arxiv import format_digest, get_hf_daily_papers, get_research_digest
+from intelligence.earnings import enrich_quotes_with_earnings
 from intelligence.market import format_market_summary, get_quotes, get_watchlist_alerts
 
 logger = structlog.get_logger(__name__)
@@ -28,48 +30,54 @@ class IntelligenceSquad:
     async def run(self, state: SquadState) -> str:
         messages = state.get("messages", [])
         last = messages[-1] if messages else None
-        query = last.content if last and hasattr(last, "content") else ""
+        raw_query = last.content if last and hasattr(last, "content") else ""
+        query = sanitize_input(str(raw_query))
         memory_ctx = state.get("memory_context", "")
+        skill_ctx = state.get("skill_context", "")
 
-        query_lower = str(query).lower()
+        query_lower = query.lower()
 
         # Route to appropriate sub-task
         if any(kw in query_lower for kw in ("paper", "arxiv", "research", "digest", "hf")):
-            return await self._research_task(str(query), memory_ctx)
+            return await self._research_task(query, memory_ctx, skill_ctx)
         elif any(kw in query_lower for kw in ("market", "stock", "price", "watchlist", "alert")):
-            return await self._market_task(str(query), memory_ctx)
+            return await self._market_task(query, memory_ctx, skill_ctx)
         elif any(kw in query_lower for kw in ("morning", "brief", "summary", "today")):
-            return await self._morning_brief(memory_ctx)
+            return await self._morning_brief(memory_ctx, skill_ctx)
         else:
-            return await self._general_task(str(query), memory_ctx)
+            return await self._general_task(query, memory_ctx, skill_ctx)
 
-    async def _market_task(self, query: str, memory_ctx: str) -> str:
+    def _build_system(self, skill_ctx: str) -> str:
+        if not skill_ctx:
+            return _SYSTEM_PROMPT
+        return f"{_SYSTEM_PROMPT}\n**Proven approaches:**\n{skill_ctx}"
+
+    async def _market_task(self, query: str, memory_ctx: str, skill_ctx: str) -> str:
         quotes = await get_quotes(self._settings.watchlist)
+        quotes = await enrich_quotes_with_earnings(quotes, settings=self._settings, llm=self._llm)
         market_text = format_market_summary(quotes)
 
         user_content = f"{memory_ctx}\n\n{market_text}\n\nUser asked: {query}"
-        response = await self._llm.complete(
+        return await self._llm.complete(
             [Message.user(user_content)],
-            system=_SYSTEM_PROMPT,
+            system=self._build_system(skill_ctx),
             max_tokens=512,
         )
-        return response
 
-    async def _research_task(self, query: str, memory_ctx: str) -> str:
-        # Extract search term from query or use defaults
+    async def _research_task(self, query: str, memory_ctx: str, skill_ctx: str) -> str:
         papers = await get_research_digest()
         digest_text = format_digest(papers[:8])
 
         user_content = f"{memory_ctx}\n\n{digest_text}\n\nUser asked: {query}"
-        response = await self._llm.complete(
+        return await self._llm.complete(
             [Message.user(user_content)],
-            system=_SYSTEM_PROMPT,
+            system=self._build_system(skill_ctx),
             max_tokens=1024,
         )
-        return response
 
-    async def _morning_brief(self, memory_ctx: str) -> str:
+    async def _morning_brief(self, memory_ctx: str, skill_ctx: str) -> str:
         quotes = await get_quotes(self._settings.watchlist)
+        quotes = await enrich_quotes_with_earnings(quotes, settings=self._settings, llm=self._llm)
         market_text = format_market_summary(quotes)
         papers = await get_hf_daily_papers(limit=3)
         paper_lines = [f"• {p.title}" for p in papers]
@@ -83,18 +91,18 @@ class IntelligenceSquad:
         )
         return await self._llm.complete(
             [Message.user(user_content)],
-            system=_SYSTEM_PROMPT,
+            system=self._build_system(skill_ctx),
             max_tokens=600,
         )
 
-    async def _general_task(self, query: str, memory_ctx: str) -> str:
+    async def _general_task(self, query: str, memory_ctx: str, skill_ctx: str) -> str:
         alerts = await get_watchlist_alerts()
         alert_text = format_market_summary(alerts) if alerts else "No watchlist alerts."
 
         user_content = f"{memory_ctx}\n\n{alert_text}\n\nUser asked: {query}"
         return await self._llm.complete(
             [Message.user(user_content)],
-            system=_SYSTEM_PROMPT,
+            system=self._build_system(skill_ctx),
             max_tokens=512,
         )
 

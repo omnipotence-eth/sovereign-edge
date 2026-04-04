@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import os
+import signal
+import time
+from collections import defaultdict
+
 import structlog
 from core.config import Settings, get_settings
 from core.exceptions import ConfigurationError
@@ -22,9 +27,23 @@ logger = structlog.get_logger(__name__)
 # Maps user_id → thread_id for pending HITL approvals
 _PENDING_HITL: dict[str, str] = {}
 
+# Per-user rate limiting — minimum seconds between messages
+_RATE_LIMIT_SECONDS = 2.0
+_LAST_REQUEST: dict[int, float] = defaultdict(float)
+
 
 def _check_auth(user_id: int, settings: Settings) -> bool:
     return user_id == settings.telegram_allowed_user_id
+
+
+def _check_rate_limit(user_id: int) -> bool:
+    """Return True if the user is within rate limit. Updates last-request timestamp."""
+    now = time.monotonic()
+    last = _LAST_REQUEST[user_id]
+    if now - last < _RATE_LIMIT_SECONDS:
+        return False
+    _LAST_REQUEST[user_id] = now
+    return True
 
 
 def _require_message(update: Update) -> Message | None:
@@ -172,8 +191,21 @@ async def hitl_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not _check_auth(user_id, settings):
         return
 
-    action, thread_id = query.data.split(":", 1)
-    _PENDING_HITL.pop(str(user_id), None)
+    # Validate callback data format before processing
+    try:
+        action, thread_id = query.data.split(":", 1)
+    except ValueError:
+        logger.warning("telegram.hitl_callback.invalid_data", length=len(query.data))
+        await query.edit_message_text("Invalid callback data.")
+        return
+
+    # Guard against double-fire: only proceed if this button hasn't been handled yet.
+    # cmd_approve / cmd_reject also pop from _PENDING_HITL, so the first handler wins.
+    pending = _PENDING_HITL.pop(str(user_id), None)
+    if pending is None:
+        # Already handled (user sent /approve command or clicked button twice)
+        await query.edit_message_text("Already handled.")
+        return
 
     approved = action == "approve"
     result = await resume_turn(thread_id, approved=approved)
@@ -194,8 +226,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await msg.reply_text("Unauthorized.")
         return
 
-    text = msg.text or ""
     user_id = update.effective_user.id
+
+    if not _check_rate_limit(user_id):
+        await msg.reply_text("Please slow down — one message at a time.")
+        return
+
+    text = msg.text or ""
     thread_id = f"user_{user_id}"
 
     logger.info("telegram.message", user_id=user_id, length=len(text))
@@ -250,5 +287,17 @@ def run_bot() -> None:
     scheduler = build_scheduler(app.bot, settings, settings.telegram_allowed_user_id)
     scheduler.start()
 
+    # Graceful shutdown — works on Linux, macOS, and Windows.
+    # Uses os._exit(0) to avoid event-loop deadlocks in signal context.
+    # PTB manages its own asyncio loop via run_polling(), so we must not
+    # touch the loop from outside — os._exit is the safest clean exit.
+    def _on_shutdown(sig: int, _frame: object = None) -> None:
+        logger.info("telegram.shutdown_signal_received", signal=sig)
+        scheduler.shutdown(wait=False)
+        os._exit(0)  # noqa: SLF001 — intentional clean exit from signal handler
+
+    signal.signal(signal.SIGTERM, _on_shutdown)
+    signal.signal(signal.SIGINT, _on_shutdown)
+
     logger.info("telegram.bot_starting")
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling(drop_pending_updates=True, stop_signals=None)

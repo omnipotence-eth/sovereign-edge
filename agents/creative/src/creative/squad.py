@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import structlog
+from core.security import sanitize_input
 from core.types import SquadState
 from llm.gateway import LLMGateway, Message
 
@@ -31,21 +32,28 @@ class CreativeSquad:
     async def run(self, state: SquadState) -> str:
         messages = state.get("messages", [])
         last = messages[-1] if messages else None
-        query = str(last.content) if last and hasattr(last, "content") else ""
+        raw_query = str(last.content) if last and hasattr(last, "content") else ""
+        query = sanitize_input(raw_query)
         memory_ctx = state.get("memory_context", "")
+        skill_ctx = state.get("skill_context", "")
 
         query_lower = query.lower()
 
         if any(kw in query_lower for kw in ("script", "youtube", "video", "tutorial")):
-            return await self._script_task(query, memory_ctx)
+            return await self._script_task(query, memory_ctx, skill_ctx)
         elif any(kw in query_lower for kw in ("diagram", "d2", "architecture", "chart")):
-            return await self._diagram_task(query, memory_ctx)
+            return await self._diagram_task(query, memory_ctx, skill_ctx)
         elif any(kw in query_lower for kw in ("linkedin", "twitter", "post", "tweet", "social")):
-            return await self._social_task(query, memory_ctx)
+            return await self._social_task(query, memory_ctx, skill_ctx)
         else:
-            return await self._general_creative(query, memory_ctx)
+            return await self._general_creative(query, memory_ctx, skill_ctx)
 
-    async def _script_task(self, query: str, memory_ctx: str) -> str:
+    def _build_system(self, skill_ctx: str) -> str:
+        if not skill_ctx:
+            return _SYSTEM_PROMPT
+        return f"{_SYSTEM_PROMPT}\n**Proven approaches:**\n{skill_ctx}"
+
+    async def _script_task(self, query: str, memory_ctx: str, skill_ctx: str) -> str:
         user_content = (
             f"{memory_ctx}\n\n"
             f"Request: {query}\n\n"
@@ -54,11 +62,11 @@ class CreativeSquad:
         )
         return await self._llm.complete(
             [Message.user(user_content)],
-            system=_SYSTEM_PROMPT,
+            system=self._build_system(skill_ctx),
             max_tokens=1200,
         )
 
-    async def _diagram_task(self, query: str, memory_ctx: str) -> str:
+    async def _diagram_task(self, query: str, memory_ctx: str, skill_ctx: str) -> str:
         user_content = (
             f"{memory_ctx}\n\n"
             f"Request: {query}\n\n"
@@ -67,11 +75,11 @@ class CreativeSquad:
         )
         return await self._llm.complete(
             [Message.user(user_content)],
-            system=_SYSTEM_PROMPT,
+            system=self._build_system(skill_ctx),
             max_tokens=800,
         )
 
-    async def _social_task(self, query: str, memory_ctx: str) -> str:
+    async def _social_task(self, query: str, memory_ctx: str, skill_ctx: str) -> str:
         user_content = (
             f"{memory_ctx}\n\n"
             f"Request: {query}\n\n"
@@ -81,14 +89,14 @@ class CreativeSquad:
         )
         return await self._llm.complete(
             [Message.user(user_content)],
-            system=_SYSTEM_PROMPT,
+            system=self._build_system(skill_ctx),
             max_tokens=600,
         )
 
-    async def _general_creative(self, query: str, memory_ctx: str) -> str:
+    async def _general_creative(self, query: str, memory_ctx: str, skill_ctx: str) -> str:
         user_content = f"{memory_ctx}\n\nRequest: {query}"
         return await self._llm.complete(
             [Message.user(user_content)],
-            system=_SYSTEM_PROMPT,
+            system=self._build_system(skill_ctx),
             max_tokens=800,
         )

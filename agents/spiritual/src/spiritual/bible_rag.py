@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import re
 from pathlib import Path
 
 import structlog
@@ -12,6 +13,10 @@ _BIBLE_TABLE = "bible_verses"
 _TSK_TABLE = "tsk_references"
 _STEPBIBLE_PATH = Path("data/stepbible")
 _TSK_PATH = Path("data/tsk")
+
+# Allowlist for reference strings — only book names, digits, spaces, dots, colons.
+# Rejects any character that could be used for SQL/filter injection in LanceDB.
+_REF_SAFE = re.compile(r"^[A-Za-z0-9 .:]+$")
 
 
 def _parse_ref(ref: str) -> tuple[str, int, int] | None:
@@ -40,7 +45,8 @@ class BibleRAG:
         self._store = MemoryStore()
         self._embedder: object | None = None
 
-    def _get_embedder(self) -> object:
+    def _get_embedder(self) -> object | None:
+        """Return the Ollama client, or None if not installed."""
         if self._embedder is None:
             try:
                 import ollama  # type: ignore
@@ -108,16 +114,24 @@ class BibleRAG:
         return self._store.vector_search(_BIBLE_TABLE, vector, limit=limit)
 
     def lookup_verse(self, reference: str) -> str | None:
-        """Direct lookup by reference string (e.g. 'John 3:16')."""
+        """Direct lookup by reference string (e.g. 'John 3:16').
+
+        Only references matching [A-Za-z0-9 .:]+ are accepted; all others are
+        rejected before reaching the database to prevent filter injection.
+        """
+        ref_stripped = reference.strip()
+        if not _REF_SAFE.match(ref_stripped):
+            logger.warning("spiritual.rag.invalid_ref_rejected", ref=ref_stripped[:50])
+            return None
+
         db = self._store._get_lance()
         if _BIBLE_TABLE not in db.table_names():
             return None
         try:
             tbl = db.open_table(_BIBLE_TABLE)
-            # Normalize reference for search
-            norm = reference.replace(" ", ".").replace(":", ".")
+            norm = ref_stripped.replace(" ", ".").replace(":", ".")
             results = tbl.search(norm).where(f"ref LIKE '%{norm}%'").limit(1).to_list()
             return results[0]["text"] if results else None
         except Exception:
-            logger.error("spiritual.rag.lookup_failed", ref=reference, exc_info=True)
+            logger.error("spiritual.rag.lookup_failed", ref=ref_stripped, exc_info=True)
             return None

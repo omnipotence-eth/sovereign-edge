@@ -28,6 +28,10 @@ class Settings(BaseSettings):
 
     # ── Intelligence squad ───────────────────────────────────────────────────
     alpha_vantage_api_key: str = ""
+    fmp_api_key: str = ""  # Financial Modeling Prep — free tier 250 req/day for transcripts
+
+    # ── Voice service ─────────────────────────────────────────────────────────
+    stt_model: str = "base.en"  # faster-whisper: tiny.en, base.en, small.en, medium.en
     watchlist: list[str] = Field(default_factory=lambda: ["NVDA", "MSFT", "GOOGL", "META"])
     market_alert_threshold: float = 0.02  # 2% move triggers alert
 
@@ -62,6 +66,7 @@ class Settings(BaseSettings):
 
     # ── Memory / vector store ────────────────────────────────────────────────
     lancedb_path: Path = Path("data/lancedb")
+    skill_db_path: Path = Path("data/skills.db")
     mem0_user_id: str = "john"
 
     # ── Observability ────────────────────────────────────────────────────────
