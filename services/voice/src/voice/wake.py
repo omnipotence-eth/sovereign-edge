@@ -39,7 +39,7 @@ class WakeWordDetector:
         Path to a custom .onnx OpenWakeWord model, or None to use the
         bundled 'alexa' model (useful for dev/testing).
     threshold:
-        Confidence threshold for detection (0–1, default 0.5).
+        Confidence threshold for detection (0-1, default 0.5).
     """
 
     def __init__(self, model_path: str | None = None, threshold: float = _THRESHOLD) -> None:

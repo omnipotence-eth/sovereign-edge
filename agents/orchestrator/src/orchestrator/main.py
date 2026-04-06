@@ -83,6 +83,11 @@ class Orchestrator:
 
     async def dispatch(self, request: TaskRequest) -> TaskResult:
         """Route *request* to the appropriate expert and trace the result."""
+        # Sanitize user input before any prompt injection reaches an expert or cache
+        from core.security import sanitize_input
+
+        request = request.model_copy(update={"content": sanitize_input(request.content)})
+
         chat_id = request.context.get("chat_id", "")
 
         # ── 1. Inject conversation history as prior message turns ───────
@@ -152,7 +157,11 @@ class Orchestrator:
             result = await expert.process(request)
 
         # ── 4. Store result in semantic cache ───────────────────────────
-        if request.routing == RoutingDecision.CLOUD and not result.cached and request.intent != Intent.INTELLIGENCE:
+        if (
+            request.routing == RoutingDecision.CLOUD
+            and not result.cached
+            and request.intent != Intent.INTELLIGENCE
+        ):
             try:
                 from memory.semantic_cache import get_cache
 
@@ -194,6 +203,11 @@ class Orchestrator:
         from the expert's stream_process() so the bot can edit messages live.
         Cache hits and local-routing results are yielded as single chunks.
         """
+        # Sanitize user input before any prompt injection reaches an expert or cache
+        from core.security import sanitize_input
+
+        request = request.model_copy(update={"content": sanitize_input(request.content)})
+
         chat_id = request.context.get("chat_id", "")
 
         # ── 1. Inject conversation history ──────────────────────────────
@@ -237,11 +251,17 @@ class Orchestrator:
         if self._director is not None:
             result = await self._director.run(request)
 
-            if request.routing == RoutingDecision.CLOUD and not result.cached and request.intent != Intent.INTELLIGENCE:
+            if (
+                request.routing == RoutingDecision.CLOUD
+                and not result.cached
+                and request.intent != Intent.INTELLIGENCE
+            ):
                 try:
                     from memory.semantic_cache import get_cache
 
-                    await get_cache().store(request.content, result.content, expert=str(result.expert))
+                    await get_cache().store(
+                        request.content, result.content, expert=str(result.expert)
+                    )
                 except Exception:
                     logger.debug("stream_cache_store_failed", exc_info=True)
 
