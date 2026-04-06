@@ -16,6 +16,7 @@ import pytest
 # Helpers (mirrors BriefOutput logic without importing the expert)
 # ---------------------------------------------------------------------------
 
+
 def _has_link(text: str) -> bool:
     return bool(re.search(r"https?://\S+", text))
 
@@ -33,9 +34,22 @@ def _has_hf_link(text: str) -> bool:
 
 
 _DFW_COMPANIES = {
-    "capital one", "at&t", "american airlines", "sabre", "jpmorgan", "chase",
-    "dell", "toyota", "deloitte", "accenture", "lockheed", "raytheon",
-    "amazon", "google", "microsoft", "tesla",
+    "capital one",
+    "at&t",
+    "american airlines",
+    "sabre",
+    "jpmorgan",
+    "chase",
+    "dell",
+    "toyota",
+    "deloitte",
+    "accenture",
+    "lockheed",
+    "raytheon",
+    "amazon",
+    "google",
+    "microsoft",
+    "tesla",
 }
 
 
@@ -47,6 +61,7 @@ def _has_company_name(text: str) -> bool:
 # ---------------------------------------------------------------------------
 # Intelligence brief contracts
 # ---------------------------------------------------------------------------
+
 
 class TestIntelligenceBriefContracts:
     """A valid intelligence brief must have at least one link and be substantive."""
@@ -104,6 +119,7 @@ class TestIntelligenceBriefContracts:
 # Career brief contracts
 # ---------------------------------------------------------------------------
 
+
 class TestCareerBriefContracts:
     """Career briefs should mention at least one company and have a job title."""
 
@@ -131,6 +147,7 @@ class TestCareerBriefContracts:
 # ---------------------------------------------------------------------------
 # Markdown sanitizer contracts (bot.py _sanitize_markdown)
 # ---------------------------------------------------------------------------
+
 
 class TestMarkdownSanitizer:
     """Telegram MarkdownV1 only renders *bold* and _italic_ — verify sanitizer."""
@@ -174,6 +191,7 @@ class TestMarkdownSanitizer:
 # Router classifier contracts
 # ---------------------------------------------------------------------------
 
+
 class TestRouterClassifier:
     """Keyword classifier should route clear signals correctly."""
 
@@ -184,37 +202,37 @@ class TestRouterClassifier:
         return IntentRouter()  # bootstrap (keyword) mode — no ONNX needed
 
     def test_bible_routes_to_spiritual(self, router) -> None:
-        from core.types import Intent
+        from core.types import IntentClass
 
-        intent, confidence = router.classify("What does the Bible say about forgiveness?")
-        assert intent == Intent.SPIRITUAL
-        assert confidence > 0.6
+        result = router.classify("What does the Bible say about forgiveness?")
+        assert result.intent == IntentClass.SPIRITUAL
+        assert result.confidence > 0.6
 
     def test_job_search_routes_to_career(self, router) -> None:
-        from core.types import Intent
+        from core.types import IntentClass
 
-        intent, confidence = router.classify("Find me ML engineer jobs in Dallas")
-        assert intent == Intent.CAREER
-        assert confidence > 0.6
+        result = router.classify("Find me ML engineer jobs in Dallas")
+        assert result.intent == IntentClass.CAREER
+        assert result.confidence > 0.6
 
     def test_arxiv_routes_to_intelligence(self, router) -> None:
-        from core.types import Intent
+        from core.types import IntentClass
 
-        intent, confidence = router.classify("Summarize recent arXiv papers on transformers")
-        assert intent == Intent.INTELLIGENCE
-        assert confidence > 0.6
+        result = router.classify("Summarize recent arXiv papers on transformers")
+        assert result.intent == IntentClass.INTELLIGENCE
+        assert result.confidence > 0.6
 
     def test_linkedin_post_routes_to_creative(self, router) -> None:
-        from core.types import Intent
+        from core.types import IntentClass
 
-        intent, confidence = router.classify("Write a LinkedIn post about my AI project")
-        assert intent == Intent.CREATIVE
-        assert confidence > 0.6
+        result = router.classify("Write a LinkedIn post about my AI project")
+        assert result.intent == IntentClass.CREATIVE
+        assert result.confidence > 0.6
 
     def test_ambiguous_query_returns_general_low_confidence(self, router) -> None:
-        from core.types import Intent
+        from core.types import IntentClass
         from router.classifier import LOW_CONFIDENCE_THRESHOLD
 
-        intent, confidence = router.classify("hey what do you think")
-        assert intent == Intent.GENERAL
-        assert confidence <= LOW_CONFIDENCE_THRESHOLD
+        result = router.classify("hey what do you think")
+        assert result.intent == IntentClass.GENERAL
+        assert result.confidence <= LOW_CONFIDENCE_THRESHOLD

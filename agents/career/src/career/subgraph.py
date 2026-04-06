@@ -10,10 +10,12 @@ strategist    — LLM synthesizes search results into career advice / brief
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import logging
 from typing import Any
 
+import httpx
 from pydantic import BaseModel, Field, field_validator
 
 try:
@@ -32,14 +34,43 @@ except ImportError:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
+# ── Constants ─────────────────────────────────────────────────────────────────
+
+# ATS platforms with stable, non-expiring job URLs (unlike LinkedIn/Indeed)
+_ATS_SITES = (
+    "site:greenhouse.io OR site:boards.greenhouse.io OR site:jobs.lever.co "
+    "OR site:wd1.myworkday.com OR site:jobs.ashbyhq.com OR site:icims.com"
+)
+_MAX_SEARCH_CHARS = 10_000  # merged cap across parallel Jina queries
+
 # ── Structured output models ───────────────────────────────────────────────────
 
-_DFW_CITIES: frozenset[str] = frozenset({
-    "dallas", "fort worth", "plano", "irving", "frisco", "allen", "mckinney",
-    "richardson", "arlington", "southlake", "addison", "carrollton", "garland",
-    "lewisville", "denton", "grand prairie", "mesquite", "rowlett", "mansfield",
-    "dfw", "dallas-fort worth", "dallas fort worth",
-})
+_DFW_CITIES: frozenset[str] = frozenset(
+    {
+        "dallas",
+        "fort worth",
+        "plano",
+        "irving",
+        "frisco",
+        "allen",
+        "mckinney",
+        "richardson",
+        "arlington",
+        "southlake",
+        "addison",
+        "carrollton",
+        "garland",
+        "lewisville",
+        "denton",
+        "grand prairie",
+        "mesquite",
+        "rowlett",
+        "mansfield",
+        "dfw",
+        "dallas-fort worth",
+        "dallas fort worth",
+    }
+)
 
 
 class JobListing(BaseModel):
@@ -65,9 +96,9 @@ class JobListing(BaseModel):
     def is_dfw_eligible(self) -> bool:
         """True if the job is in a DFW city or explicitly remote/hybrid."""
         city_lower = self.city.lower()
-        return (
-            any(dfw_city in city_lower for dfw_city in _DFW_CITIES)
-            or self.work_mode in ("remote", "hybrid")
+        return any(dfw_city in city_lower for dfw_city in _DFW_CITIES) or self.work_mode in (
+            "remote",
+            "hybrid",
         )
 
 
@@ -119,7 +150,7 @@ FORBIDDEN — these render as literal characters in Telegram:
 
 JOB LIST FORMAT — each entry must follow this exact template:
   1. *Company Name* — Role Title
-     _City, TX_ | Salary: $XXXk–$XXXk (if listed)
+     _City, TX_ | Salary: $XXXk-$XXXk (if listed)
      [Apply →](https://direct-link)
 
   2. *Company Name* — Role Title
@@ -156,13 +187,13 @@ def build_system_prompt() -> str:
         f"OR jobs explicitly marked remote/hybrid that are open to {location} candidates.\n"
         f"HARD RULE: Do not list jobs in other cities (NYC, SF, Seattle, etc.) unless remote.\n\n"
         f"You have access to live search results. For each job listing extract and present:\n"
-        f"company name, role title, city/state, salary (if shown), and an application link.{diff_section}\n\n"
-        f"LINK PRIORITY — LinkedIn and Indeed job URLs expire within days of the position being filled.\n"
+        f"company name, role title, city/state, salary (if shown), and an application link.{diff_section}\n\n"  # noqa: E501
+        f"LINK PRIORITY — LinkedIn and Indeed job URLs expire within days of the position being filled.\n"  # noqa: E501
         f"Use this priority order for apply_url:\n"
-        f"  1. Company's own careers page (careers.company.com, company.com/careers) — most stable\n"
+        f"  1. Company's own careers page (careers.company.com, company.com/careers) — most stable\n"  # noqa: E501
         f"  2. Direct ATS link (greenhouse.io, lever.co, workday.com, icims.com) — stable\n"
         f"  3. LinkedIn or Indeed URL — only if no stable link is available\n"
-        f"If only a LinkedIn/Indeed URL is found, still include it but note it may have expired.\n\n"
+        f"If only a LinkedIn/Indeed URL is found, still include it but note it may have expired.\n\n"  # noqa: E501
         f"When no search results are available, share 2-3 known {location} ML/AI employers\n"
         f"actively hiring and link directly to their careers pages."
     )
@@ -173,19 +204,17 @@ def build_search_queries() -> list[str]:
 
     s = get_settings()
     location = s.career_target_location
-    roles = s.career_target_roles.replace(", ", " OR ").replace(",", " OR ")
-    # Include current year/month so search engines surface recent postings.
-    # LinkedIn/Indeed deep-link URLs expire when a position is filled;
-    # the freshness signal biases results toward live listings.
+    roles = s.career_target_roles
     today = datetime.date.today()
-    freshness = f"{today.year}-{today.month:02d}"
     return [
-        f'("{roles}") ("{location}" OR "Dallas" OR "Plano" OR "Irving" OR "Frisco") hiring {freshness} -filled -expired',
-        f'machine learning engineer AI engineer "{location}" OR "Dallas TX" OR "Plano TX" jobs {today.year} -"New York" -"San Francisco" -"Seattle"',
+        # Jina is a semantic search API — no site: or Google operators.
+        f"{roles} jobs hiring Dallas Fort Worth Texas {today.year}",
+        f"machine learning AI engineer positions {location} {today.year}",
     ]
 
 
 # ── State ─────────────────────────────────────────────────────────────────────
+
 
 class CareerState(TypedDict):
     # ── Inputs ────────────────────────────────────────────────────────────
@@ -205,8 +234,9 @@ class CareerState(TypedDict):
 
 # ── Nodes ─────────────────────────────────────────────────────────────────────
 
+
 async def _job_searcher(state: CareerState) -> dict[str, Any]:
-    """Search for live job listings and market data via Jina (cloud-only)."""
+    """Search for live job listings via Jina — ATS-targeted and general queries in parallel."""
     from core.types import RoutingDecision
 
     if state["routing"] != RoutingDecision.CLOUD:
@@ -215,24 +245,65 @@ async def _job_searcher(state: CareerState) -> dict[str, Any]:
         from search.jina import search as jina_search
 
         if state["is_morning_brief"]:
-            query = build_search_queries()[0]
+            queries = build_search_queries()
         else:
             from core.config import get_settings
+
             s = get_settings()
             location = s.career_target_location
             year = datetime.date.today().year
-            # Tighten location filter and add year for freshness
-            query = (
-                f'{state["query"]} ML Engineer AI job "{location}" OR "Dallas" OR "Plano" OR "Irving" '
-                f'{year} -"New York" -"San Francisco" -"Chicago" -"Seattle" -"Austin" -filled -expired'
-            )
+            # Jina is a semantic search API — no site: or -word operators.
+            # Keep queries short and natural-language.
+            queries = [
+                f"ML Engineer AI jobs {state['query']} Dallas Fort Worth Texas {year}",
+                f"machine learning engineer jobs hiring {location} {year}",
+            ]
 
-        results = await jina_search(query, max_results=5)
-        logger.info("career_job_searcher chars=%d", len(results))
-        return {"search_results": results}
+        raw = await asyncio.gather(
+            *[jina_search(q, max_results=4) for q in queries],
+            return_exceptions=True,
+        )
+        merged = "\n\n".join(r for r in raw if isinstance(r, str) and r)[:_MAX_SEARCH_CHARS]
+        logger.info("career_job_searcher queries=%d chars=%d", len(queries), len(merged))
+        return {"search_results": merged}
     except Exception:
         logger.warning("career_job_search_failed", exc_info=True)
         return {"search_results": ""}
+
+
+async def _check_url_live(url: str, client: httpx.AsyncClient) -> bool:
+    """HEAD-check a URL; returns True if non-4xx (or on any network error — fail open)."""
+    if not url or not url.startswith("http"):
+        return False
+    try:
+        resp = await client.head(url, follow_redirects=True)
+        return resp.status_code < 400
+    except Exception:
+        return True  # Fail open: keep listing if we can't reach the URL
+
+
+async def _validate_listings(listings: list[JobListing]) -> list[JobListing]:
+    """Drop listings whose apply_url returns a 4xx HTTP response.
+
+    Uses a single shared AsyncClient for all checks. Fails open (keeps listing)
+    on network errors so transient connectivity issues don't blank the response.
+    """
+    if not listings:
+        return listings
+    try:
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
+            checks = await asyncio.gather(
+                *[_check_url_live(j.apply_url, client) for j in listings],
+                return_exceptions=True,
+            )
+        live = [j for j, ok in zip(listings, checks, strict=False) if ok is True]
+        dropped = len(listings) - len(live)
+        if dropped:
+            logger.info("career_url_validation_dropped count=%d", dropped)
+        return live
+    except Exception:
+        logger.warning("career_url_validation_failed", exc_info=True)
+        return listings  # Don't blank the response on unexpected error
 
 
 async def _strategist(state: CareerState) -> dict[str, Any]:
@@ -278,10 +349,10 @@ async def _strategist(state: CareerState) -> dict[str, Any]:
         expert="career",
     )
     if structured is not None:
-        logger.info(
-            "career_strategist_structured jobs=%d",
-            len([j for j in structured.jobs if j.is_dfw_eligible]),
-        )
+        eligible = [j for j in structured.jobs if j.is_dfw_eligible]
+        eligible = await _validate_listings(eligible)
+        structured.jobs = eligible
+        logger.info("career_strategist_structured jobs=%d", len(eligible))
         return {
             "response": format_job_listings(structured),
             "model_used": "structured",
@@ -299,17 +370,18 @@ async def _strategist(state: CareerState) -> dict[str, Any]:
         expert="career",
     )
     return {
-        "response": result["content"],
-        "model_used": result.get("model", ""),
-        "tokens_in": result.get("tokens_in", 0),
-        "tokens_out": result.get("tokens_out", 0),
-        "cost_usd": result.get("cost_usd", 0.0),
+        "response": result,
+        "model_used": "",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "cost_usd": 0.0,
     }
 
 
 # ── Graph construction ────────────────────────────────────────────────────────
 
-def _build() -> Any:
+
+def _build() -> Any:  # noqa: ANN401
     builder: StateGraph = StateGraph(CareerState)
 
     builder.add_node("job_searcher", _job_searcher)

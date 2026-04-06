@@ -1,0 +1,22 @@
+[project]
+name = "sovereign-edge-goals"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "sovereign-edge-core",
+    "sovereign-edge-llm",
+    "sovereign-edge-observability",
+    "langgraph>=1.0,<2.0",
+]
+
+[tool.uv.sources]
+sovereign-edge-core = { workspace = true }
+sovereign-edge-llm = { workspace = true }
+sovereign-edge-observability = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/goals"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

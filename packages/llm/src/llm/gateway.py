@@ -1,7 +1,9 @@
 """
 Multi-provider LLM gateway using LiteLLM as a library (NOT proxy).
 
-Automatic fallback chain: Groq → Gemini → Cerebras → Mistral → Local
+Fallback chain for complex/technical queries: Groq → Gemini → Cerebras → Mistral → Local
+Simple conversational queries (<250 chars, no technical keywords): Mistral is tried
+  second (after Groq) to preserve Groq/Gemini quota for complex work.
 Per-provider token-bucket RPM rate limiting with persistent state.
 Daily token usage tracking.
 Exponential backoff on transient errors.
@@ -21,10 +23,10 @@ import time
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from datetime import date
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import litellm
-from core.config import get_settings
+from core.config import Settings, get_settings
 from core.types import RoutingDecision
 from pydantic import BaseModel
 
@@ -40,6 +42,29 @@ _RETRY_BASE_DELAY = 1.0  # seconds
 
 
 @dataclass
+class Message:
+    """Typed LLM message with factory helpers and dict serialisation."""
+
+    role: str
+    content: str
+
+    @classmethod
+    def user(cls, content: str) -> Message:
+        return cls(role="user", content=content)
+
+    @classmethod
+    def system(cls, content: str) -> Message:
+        return cls(role="system", content=content)
+
+    @classmethod
+    def assistant(cls, content: str) -> Message:
+        return cls(role="assistant", content=content)
+
+    def to_dict(self) -> dict[str, str]:
+        return {"role": self.role, "content": self.content}
+
+
+@dataclass
 class ProviderConfig:
     """Configuration for a single LLM provider."""
 
@@ -48,11 +73,11 @@ class ProviderConfig:
     tpd: int  # Tokens per day (approximate limit)
     priority: int  # Lower = tried first
     env_key: str  # Environment variable name for API key
+    supports_structured: bool = True  # False for models that refuse tool/function calling
 
 
-def _build_providers() -> list[ProviderConfig]:
+def _build_providers(s: Settings) -> list[ProviderConfig]:
     """Build provider list using RPM values from Settings (allows per-device tuning)."""
-    s = get_settings()
     return [
         ProviderConfig(
             model="groq/meta-llama/llama-4-scout-17b-16e-instruct",
@@ -60,6 +85,7 @@ def _build_providers() -> list[ProviderConfig]:
             tpd=500_000,
             priority=1,
             env_key="GROQ_API_KEY",
+            supports_structured=False,  # Llama 4 Scout generates free-text instead of tool calls
         ),
         ProviderConfig(
             model="gemini/gemini-2.5-flash",
@@ -69,11 +95,12 @@ def _build_providers() -> list[ProviderConfig]:
             env_key="GOOGLE_API_KEY",
         ),
         ProviderConfig(
-            model="cerebras/llama-3.3-70b",
+            model="cerebras/llama3.3-70b",
             rpm=s.cerebras_rpm,
             tpd=1_000_000,
             priority=3,
             env_key="CEREBRAS_API_KEY",
+            supports_structured=False,  # Model consistently 404 — disabled until Cerebras updates
         ),
         ProviderConfig(
             model="mistral/mistral-small-latest",
@@ -81,6 +108,7 @@ def _build_providers() -> list[ProviderConfig]:
             tpd=33_000_000,
             priority=4,
             env_key="MISTRAL_API_KEY",
+            supports_structured=False,  # Returns free-text instead of tool calls
         ),
     ]
 
@@ -88,11 +116,31 @@ def _build_providers() -> list[ProviderConfig]:
 LOCAL_FALLBACK_MODEL = "ollama/qwen3:0.6b"
 
 # Keywords that signal a complex/technical query — these should use premium providers
-_TECHNICAL_KEYWORDS = frozenset({
-    "arxiv", "paper", "model", "training", "inference", "transformer", "llm",
-    "fine-tun", "embedding", "benchmark", "dataset", "gpu", "cuda", "vram",
-    "grpo", "rlhf", "lora", "qlora", "attention", "quantiz", "research",
-})
+_TECHNICAL_KEYWORDS = frozenset(
+    {
+        "arxiv",
+        "paper",
+        "model",
+        "training",
+        "inference",
+        "transformer",
+        "llm",
+        "fine-tun",
+        "embedding",
+        "benchmark",
+        "dataset",
+        "gpu",
+        "cuda",
+        "vram",
+        "grpo",
+        "rlhf",
+        "lora",
+        "qlora",
+        "attention",
+        "quantiz",
+        "research",
+    }
+)
 
 
 def _is_simple_query(messages: list[dict[str, str]]) -> bool:
@@ -101,9 +149,7 @@ def _is_simple_query(messages: list[dict[str, str]]) -> bool:
     Mistral has 33M TPD free — routing simple queries there preserves Groq/Gemini
     capacity for complex intelligence and career work.
     """
-    last_user = next(
-        (m["content"] for m in reversed(messages) if m.get("role") == "user"), ""
-    )
+    last_user = next((m["content"] for m in reversed(messages) if m.get("role") == "user"), "")
     if len(last_user) > 250:
         return False
     lower = last_user.lower()
@@ -176,10 +222,10 @@ class LLMGateway:
     means per-provider rate limits and daily token caps are never enforced.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, settings: Settings | None = None) -> None:
         self.tracker = UsageTracker()
-        self.settings = get_settings()
-        self._providers = _build_providers()
+        self.settings = settings or get_settings()
+        self._providers = _build_providers(self.settings)
         self._buckets: dict[str, TokenBucket] = {
             p.model: TokenBucket(rpm=p.rpm) for p in self._providers
         }
@@ -187,7 +233,10 @@ class LLMGateway:
         # module level) so tests can patch get_settings() before gateway init.
         key_map: dict[str, str] = {
             "GROQ_API_KEY": self.settings.groq_api_key.get_secret_value(),
-            "GOOGLE_API_KEY": self.settings.google_api_key.get_secret_value(),
+            "GOOGLE_API_KEY": (
+                self.settings.gemini_api_key.get_secret_value()
+                or self.settings.google_api_key.get_secret_value()
+            ),
             "CEREBRAS_API_KEY": self.settings.cerebras_api_key.get_secret_value(),
             "MISTRAL_API_KEY": self.settings.mistral_api_key.get_secret_value(),
         }
@@ -197,42 +246,70 @@ class LLMGateway:
 
     async def complete(
         self,
-        messages: list[dict[str, str]],
+        messages: list[Message] | list[dict[str, str]],
+        system: str | None = None,
         routing: RoutingDecision = RoutingDecision.CLOUD,
         max_tokens: int = 2048,
         temperature: float = 0.7,
         expert: str = "general",
-    ) -> dict[str, object]:
+    ) -> str:
         """
         Send a completion request through the fallback chain.
 
-        Returns dict with keys: content, model, tokens_in, tokens_out, latency_ms, cost_usd
+        Returns the response content as a string.
+        Falls back to the local Ollama model if all cloud providers fail or none are configured.
         """
+        # Convert Message objects to dicts; prepend system message if provided
+        msg_dicts: list[dict[str, str]] = []
+        if system:
+            msg_dicts.append({"role": "system", "content": system})
+        for m in messages:
+            msg_dicts.append(m.to_dict() if isinstance(m, Message) else m)
+
         if routing == RoutingDecision.LOCAL:
-            return await self._call_local(messages, max_tokens, temperature, expert)
+            result = await self._call_local(msg_dicts, max_tokens, temperature, expert)
+            return str(result["content"])
 
         # Simple conversational queries go to Mistral first — it has 33M TPD free
-        # and this preserves Groq/Gemini quota for complex research and career work.
-        if _is_simple_query(messages):
+        if _is_simple_query(msg_dicts):
             sort_key = lambda p: 1 if "mistral" in p.model else p.priority  # noqa: E731
         else:
             sort_key = lambda p: p.priority  # noqa: E731
 
         for provider in sorted(self._providers, key=sort_key):
+            if not os.environ.get(provider.env_key):
+                continue  # provider not configured
             if self.tracker.get(provider.model) >= provider.tpd:
                 logger.debug("provider_daily_limit_reached model=%s", provider.model)
                 continue
-
             if not await self._buckets[provider.model].acquire():
                 logger.debug("provider_rpm_limited model=%s", provider.model)
                 continue
 
-            result = await self._call_with_retry(provider, messages, max_tokens, temperature, expert)
-            if result is not None:
-                return result
+            try:
+                response = await self._call_with_retry(
+                    provider=provider,
+                    messages=msg_dicts,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    expert=expert,
+                )
+                content = response.choices[0].message.content or ""
+                if not content:
+                    logger.warning("empty_response_from provider=%s", provider.model)
+                    continue
+                return content
+            except litellm.AuthenticationError:  # type: ignore[attr-defined]
+                logger.warning("provider_auth_failed model=%s — skipping", provider.model)
+                continue
+            except Exception:
+                logger.warning("provider_failed model=%s", provider.model, exc_info=True)
+                continue
 
-        logger.warning("all_cloud_providers_failed falling_back=local")
-        return await self._call_local(messages, max_tokens, temperature, expert)
+        # All cloud providers failed or none configured — fall back to local model
+        logger.warning("all_cloud_providers_failed — falling back to local")
+        local = await self._call_local(msg_dicts, max_tokens, temperature, expert)
+        return str(local["content"])
 
     async def stream_complete(
         self,
@@ -260,6 +337,8 @@ class LLMGateway:
             sort_key = lambda p: p.priority  # noqa: E731
 
         for provider in sorted(self._providers, key=sort_key):
+            if not os.environ.get(provider.env_key):
+                continue  # provider not configured
             if self.tracker.get(provider.model) >= provider.tpd:
                 continue
             if not await self._buckets[provider.model].acquire():
@@ -286,7 +365,10 @@ class LLMGateway:
                 self.tracker.add(provider.model, tokens_in + tokens_out)
                 logger.info(
                     "stream_response model=%s expert=%s tokens_in=%d tokens_out=%d",
-                    provider.model, expert, tokens_in, tokens_out,
+                    provider.model,
+                    expert,
+                    tokens_in,
+                    tokens_out,
                 )
                 return  # success — do not try next provider
 
@@ -336,6 +418,10 @@ class LLMGateway:
         )
 
         for provider in sorted(self._providers, key=sort_key):
+            if not provider.supports_structured:
+                continue
+            if not os.environ.get(provider.env_key):
+                continue  # provider not configured
             if self.tracker.get(provider.model) >= provider.tpd:
                 continue
             if not await self._buckets[provider.model].acquire():
@@ -358,7 +444,7 @@ class LLMGateway:
         max_tokens: int,
         temperature: float,
         expert: str,
-        instructor_module: Any,
+        instructor_module: Any,  # noqa: ANN401
     ) -> _ModelT | None:
         """Attempt one provider with instructor validation. Returns None to try next."""
         client = instructor_module.from_litellm(litellm.acompletion)
@@ -378,13 +464,17 @@ class LLMGateway:
                 elapsed = (time.monotonic() - start) * 1000
                 logger.info(
                     "structured_response model=%s expert=%s latency_ms=%.1f",
-                    provider.model, expert, elapsed,
+                    provider.model,
+                    expert,
+                    elapsed,
                 )
                 return result
 
             except litellm.RateLimitError:  # type: ignore[attr-defined]
                 delay = _RETRY_BASE_DELAY * (2**attempt)
-                logger.warning("structured_rate_limited model=%s attempt=%d", provider.model, attempt + 1)
+                logger.warning(
+                    "structured_rate_limited model=%s attempt=%d", provider.model, attempt + 1
+                )
                 await asyncio.sleep(delay)
 
             except litellm.AuthenticationError:  # type: ignore[attr-defined]
@@ -393,13 +483,19 @@ class LLMGateway:
 
             except (litellm.ServiceUnavailableError, TimeoutError, litellm.Timeout):  # type: ignore[attr-defined]
                 delay = _RETRY_BASE_DELAY * (2**attempt)
-                logger.warning("structured_provider_unavailable model=%s attempt=%d", provider.model, attempt + 1)
+                logger.warning(
+                    "structured_provider_unavailable model=%s attempt=%d",
+                    provider.model,
+                    attempt + 1,
+                )
                 await asyncio.sleep(delay)
 
             except Exception:
                 logger.warning(
                     "structured_provider_failed model=%s attempt=%d",
-                    provider.model, attempt + 1, exc_info=True,
+                    provider.model,
+                    attempt + 1,
+                    exc_info=True,
                 )
                 return None
 
@@ -416,9 +512,8 @@ class LLMGateway:
         """Attempt structured output from local Ollama using JSON mode."""
         try:
             import instructor
-            client = instructor.from_litellm(
-                litellm.acompletion, mode=instructor.Mode.JSON
-            )
+
+            client = instructor.from_litellm(litellm.acompletion, mode=instructor.Mode.JSON)
             result = await client.chat.completions.create(
                 model=LOCAL_FALLBACK_MODEL,
                 messages=messages,
@@ -437,13 +532,20 @@ class LLMGateway:
 
     async def _call_with_retry(
         self,
+        *,
         provider: ProviderConfig,
         messages: list[dict[str, str]],
         max_tokens: int,
         temperature: float,
         expert: str,
-    ) -> dict[str, object] | None:
-        """Attempt provider with exponential backoff. Returns None to try next provider."""
+    ) -> Any:  # noqa: ANN401 — litellm response type is opaque
+        """Attempt provider with exponential backoff. Returns raw litellm response.
+
+        Raises on all failures so complete() can try the next provider.
+        Transient errors (rate limit, timeout, unavailable) are retried up to
+        _MAX_RETRIES times before raising. Fatal errors raise immediately.
+        """
+        last_exc: Exception = RuntimeError("no attempts made")
         for attempt in range(_MAX_RETRIES):
             try:
                 start = time.monotonic()
@@ -460,34 +562,18 @@ class LLMGateway:
                 tokens_out = response.usage.completion_tokens if response.usage else 0
                 self.tracker.add(provider.model, tokens_in + tokens_out)
 
-                content = response.choices[0].message.content or ""
-                try:
-                    raw_cost = litellm.completion_cost(completion_response=response)  # type: ignore[attr-defined]
-                    cost_usd = float(raw_cost) if raw_cost is not None else 0.0
-                except Exception:
-                    cost_usd = 0.0
-
                 logger.info(
-                    "llm_response model=%s expert=%s tokens_in=%d tokens_out=%d "
-                    "latency_ms=%.1f cost_usd=%.6f",
+                    "llm_response model=%s expert=%s tokens_in=%d tokens_out=%d latency_ms=%.1f",
                     provider.model,
                     expert,
                     tokens_in,
                     tokens_out,
                     elapsed,
-                    cost_usd,
                 )
+                return response
 
-                return {
-                    "content": content,
-                    "model": provider.model,
-                    "tokens_in": tokens_in,
-                    "tokens_out": tokens_out,
-                    "latency_ms": round(elapsed, 1),
-                    "cost_usd": cost_usd,
-                }
-
-            except litellm.RateLimitError:  # type: ignore[attr-defined]
+            except litellm.RateLimitError as exc:  # type: ignore[attr-defined]
+                last_exc = exc
                 delay = _RETRY_BASE_DELAY * (2**attempt)
                 logger.warning(
                     "provider_rate_limited model=%s attempt=%d retry_in=%.1fs",
@@ -497,7 +583,8 @@ class LLMGateway:
                 )
                 await asyncio.sleep(delay)
 
-            except litellm.ServiceUnavailableError:  # type: ignore[attr-defined]
+            except litellm.ServiceUnavailableError as exc:  # type: ignore[attr-defined]
+                last_exc = exc
                 delay = _RETRY_BASE_DELAY * (2**attempt)
                 logger.warning(
                     "provider_unavailable model=%s attempt=%d retry_in=%.1fs",
@@ -507,15 +594,16 @@ class LLMGateway:
                 )
                 await asyncio.sleep(delay)
 
-            except litellm.AuthenticationError:  # type: ignore[attr-defined]
+            except litellm.AuthenticationError as exc:  # type: ignore[attr-defined]
                 logger.warning("provider_auth_failed model=%s — check API key", provider.model)
-                return None  # Bad key — skip this provider entirely
+                raise exc
 
-            except litellm.BadRequestError:  # type: ignore[attr-defined]
+            except litellm.BadRequestError as exc:  # type: ignore[attr-defined]
                 logger.warning("provider_bad_request model=%s", provider.model)
-                return None  # Bad request — skip provider, try next
+                raise exc
 
-            except (TimeoutError, litellm.Timeout):  # type: ignore[attr-defined]
+            except (TimeoutError, litellm.Timeout) as exc:  # type: ignore[attr-defined]
+                last_exc = exc
                 delay = _RETRY_BASE_DELAY * (2**attempt)
                 logger.warning(
                     "provider_timeout model=%s attempt=%d retry_in=%.1fs",
@@ -525,21 +613,21 @@ class LLMGateway:
                 )
                 await asyncio.sleep(delay)
 
-            except Exception:
+            except Exception as exc:
                 logger.warning(
                     "provider_unexpected_error model=%s attempt=%d",
                     provider.model,
                     attempt + 1,
                     exc_info=True,
                 )
-                return None
+                raise exc
 
         logger.warning(
             "provider_exhausted_retries model=%s max_retries=%d",
             provider.model,
             _MAX_RETRIES,
         )
-        return None
+        raise last_exc
 
     async def _call_local(
         self,

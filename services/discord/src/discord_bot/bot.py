@@ -181,9 +181,7 @@ class SovereignEdgeDiscordBot(discord.Client):
 
         # Input length guard
         if len(user_text) > _MAX_INPUT_CHARS:
-            logger.info(
-                "input_truncated channel_id=%s original_len=%d", channel_id, len(user_text)
-            )
+            logger.info("input_truncated channel_id=%s original_len=%d", channel_id, len(user_text))
             user_text = user_text[:_MAX_INPUT_CHARS]
 
         intent, confidence, routing = await self._router.aroute(user_text)
@@ -264,10 +262,10 @@ class SovereignEdgeDiscordBot(discord.Client):
                 return
             await interaction.response.defer()
             health = await self._orchestrator.health_check_all()
-            lines = [
-                f"{'✅' if ok else '❌'} **{name}**" for name, ok in sorted(health.items())
-            ]
-            text = "🏥 **Expert Health**\n\n" + "\n".join(lines) if lines else "No experts registered."
+            lines = [f"{'✅' if ok else '❌'} **{name}**" for name, ok in sorted(health.items())]
+            text = (
+                "🏥 **Expert Health**\n\n" + "\n".join(lines) if lines else "No experts registered."
+            )
             await interaction.followup.send(text)
 
         @self.tree.command(name="stats", description="Today's usage and cost stats")
@@ -321,9 +319,7 @@ class SovereignEdgeDiscordBot(discord.Client):
 # ---------------------------------------------------------------------- #
 
 
-async def _keep_typing(
-    channel: discord.abc.Messageable, stop: asyncio.Event
-) -> None:
+async def _keep_typing(channel: discord.abc.Messageable, stop: asyncio.Event) -> None:
     """Keep the typing indicator alive every 8 s until *stop* is set.
 
     Discord's typing indicator lasts ~10 s, so refresh at 8 s to stay visible.
@@ -368,12 +364,13 @@ async def _run() -> None:
 
     from career.expert import CareerExpert
     from creative.expert import CreativeExpert
+    from goals.expert import GoalExpert
     from intelligence.expert import IntelligenceExpert
     from orchestrator.main import Orchestrator
     from spiritual.expert import SpiritualExpert
 
     orch = Orchestrator()
-    for expert in (SpiritualExpert(), CareerExpert(), IntelligenceExpert(), CreativeExpert()):
+    for expert in (SpiritualExpert(), CareerExpert(), IntelligenceExpert(), CreativeExpert(), GoalExpert()):  # noqa: E501
         orch.register(expert)
 
     bot = SovereignEdgeDiscordBot(orch)

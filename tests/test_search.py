@@ -20,7 +20,7 @@ def _mock_response(
     resp = MagicMock()
     resp.status_code = status_code
     resp.text = text
-    resp.json = MagicMock(return_value=json_data or {})
+    resp.json = MagicMock(return_value={} if json_data is None else json_data)
     resp.raise_for_status = MagicMock()
     if status_code >= 400:
         import httpx

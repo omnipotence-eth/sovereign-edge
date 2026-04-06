@@ -75,6 +75,7 @@ Keep it under 120 words. Warm and personal in tone.\
 
 # ── State ─────────────────────────────────────────────────────────────────────
 
+
 class SpiritualState(TypedDict):
     # ── Inputs ────────────────────────────────────────────────────────────
     query: str
@@ -82,7 +83,7 @@ class SpiritualState(TypedDict):
     history: list[dict[str, str]]
     is_morning_brief: bool
     # ── Intermediate ──────────────────────────────────────────────────────
-    scripture: str       # formatted verse text from Bible API
+    scripture: str  # formatted verse text from Bible API
     # ── Outputs ───────────────────────────────────────────────────────────
     response: str
     model_used: str
@@ -92,6 +93,7 @@ class SpiritualState(TypedDict):
 
 
 # ── Nodes ─────────────────────────────────────────────────────────────────────
+
 
 async def _scripture_fetcher(state: SpiritualState) -> dict[str, Any]:
     """Fetch a Bible verse — specific reference if found in query, else random."""
@@ -155,17 +157,18 @@ async def _theologian(state: SpiritualState) -> dict[str, Any]:
     )
 
     return {
-        "response": result["content"],
-        "model_used": result.get("model", ""),
-        "tokens_in": result.get("tokens_in", 0),
-        "tokens_out": result.get("tokens_out", 0),
-        "cost_usd": result.get("cost_usd", 0.0),
+        "response": result,
+        "model_used": "",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "cost_usd": 0.0,
     }
 
 
 # ── Graph construction ────────────────────────────────────────────────────────
 
-def _build() -> Any:
+
+def _build() -> Any:  # noqa: ANN401
     builder: StateGraph = StateGraph(SpiritualState)
 
     builder.add_node("scripture_fetcher", _scripture_fetcher)

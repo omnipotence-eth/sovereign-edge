@@ -10,6 +10,7 @@ Falls back to a direct gateway call when LangGraph is unavailable.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 
 from core.expert import BaseExpert
@@ -41,7 +42,6 @@ class IntelligenceExpert(BaseExpert):
         return await self._process_direct(task, t0)
 
     async def _process_via_subgraph(self, task: TaskRequest, t0: float) -> TaskResult:
-        import json
 
         history: list[dict[str, str]] = []
         if history_json := task.context.get("history"):
@@ -51,20 +51,22 @@ class IntelligenceExpert(BaseExpert):
                 pass
 
         try:
-            result = await intelligence_subgraph.ainvoke({
-                "query": task.content,
-                "routing": task.routing,
-                "history": history,
-                "is_morning_brief": False,
-                "raw_papers": [],
-                "ranked_papers": [],
-                "repo_relevant_papers": [],
-                "response": "",
-                "model_used": "",
-                "tokens_in": 0,
-                "tokens_out": 0,
-                "cost_usd": 0.0,
-            })
+            result = await intelligence_subgraph.ainvoke(
+                {
+                    "query": task.content,
+                    "routing": task.routing,
+                    "history": history,
+                    "is_morning_brief": False,
+                    "raw_papers": [],
+                    "ranked_papers": [],
+                    "repo_relevant_papers": [],
+                    "response": "",
+                    "model_used": "",
+                    "tokens_in": 0,
+                    "tokens_out": 0,
+                    "cost_usd": 0.0,
+                }
+            )
         except Exception:
             logger.warning("intel_subgraph_invoke_failed — falling back to direct", exc_info=True)
             return await self._process_direct(task, t0)
@@ -84,7 +86,6 @@ class IntelligenceExpert(BaseExpert):
 
     async def _process_direct(self, task: TaskRequest, t0: float) -> TaskResult:
         """Fallback: single LLM call when LangGraph is unavailable."""
-        import json
 
         from llm.gateway import get_gateway
         from search.arxiv import fetch_recent, format_papers
@@ -123,56 +124,67 @@ class IntelligenceExpert(BaseExpert):
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             *history,
-            {"role": "user", "content": (
-                f"Live research data:\n{research_context}\n\n---\n{user_input}"
-                if research_context
-                else user_input
-            )},
+            {
+                "role": "user",
+                "content": (
+                    f"Live research data:\n{research_context}\n\n---\n{user_input}"
+                    if research_context
+                    else user_input
+                ),
+            },
         ]
 
-        result = await gateway.complete(
-            messages=messages, max_tokens=2048, routing=task.routing, expert=self.name,
+        content = await gateway.complete(
+            messages=messages,
+            max_tokens=2048,
+            routing=task.routing,
+            expert=self.name,
         )
 
-        brief = BriefOutput(content=result["content"])
+        brief = BriefOutput(content=content)
         if not brief.is_valid:
             logger.warning(
                 "brief_quality_low expert=intelligence links=%d words=%d",
-                brief.link_count, brief.word_count,
+                brief.link_count,
+                brief.word_count,
             )
 
         return TaskResult(
             task_id=task.task_id,
             expert=ExpertName.INTELLIGENCE,
             content=brief.content,
-            model_used=result["model"],
-            tokens_in=result["tokens_in"],
-            tokens_out=result["tokens_out"],
+            model_used="",
+            tokens_in=0,
+            tokens_out=0,
             latency_ms=(time.monotonic() - t0) * 1000,
-            cost_usd=result["cost_usd"],
+            cost_usd=0.0,
             routing=task.routing,
         )
 
     async def morning_brief(self) -> str:
         if intelligence_subgraph is not None:
             try:
-                result = await intelligence_subgraph.ainvoke({
-                    "query": "",
-                    "routing": RoutingDecision.CLOUD,
-                    "history": [],
-                    "is_morning_brief": True,
-                    "raw_papers": [],
-                    "ranked_papers": [],
-                    "repo_relevant_papers": [],
-                    "response": "",
-                    "model_used": "",
-                    "tokens_in": 0,
-                    "tokens_out": 0,
-                    "cost_usd": 0.0,
-                })
+                result = await intelligence_subgraph.ainvoke(
+                    {
+                        "query": "",
+                        "routing": RoutingDecision.CLOUD,
+                        "history": [],
+                        "is_morning_brief": True,
+                        "raw_papers": [],
+                        "ranked_papers": [],
+                        "repo_relevant_papers": [],
+                        "response": "",
+                        "model_used": "",
+                        "tokens_in": 0,
+                        "tokens_out": 0,
+                        "cost_usd": 0.0,
+                    }
+                )
                 return result["response"]
             except Exception:
-                logger.warning("intel_morning_brief_subgraph_failed — falling back to direct", exc_info=True)
+                logger.warning(
+                    "intel_morning_brief_subgraph_failed — falling back to direct", exc_info=True
+                )
                 # fall through to direct path below
 
         # Fallback
@@ -182,7 +194,9 @@ class IntelligenceExpert(BaseExpert):
 
         gateway = get_gateway()
         arxiv_papers, hf_papers = await asyncio.gather(
-            fetch_recent(max_results=5), fetch_daily_papers(), return_exceptions=True,
+            fetch_recent(max_results=5),
+            fetch_daily_papers(),
+            return_exceptions=True,
         )
         if isinstance(arxiv_papers, Exception):
             logger.warning("morning_brief_arxiv_failed", error=str(arxiv_papers))
@@ -198,29 +212,33 @@ class IntelligenceExpert(BaseExpert):
             all_parts.append(format_hf_papers(hf_papers))
         research_context = "Recent AI/ML papers:\n" + "\n".join(all_parts) if all_parts else ""
 
-        result = await gateway.complete(
+        content = await gateway.complete(
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": (
-                    f"Live research data:\n{research_context}\n\n---\n{MORNING_PROMPT}"
-                    if research_context else MORNING_PROMPT
-                )},
+                {
+                    "role": "user",
+                    "content": (
+                        f"Live research data:\n{research_context}\n\n---\n{MORNING_PROMPT}"
+                        if research_context
+                        else MORNING_PROMPT
+                    ),
+                },
             ],
             max_tokens=300,
             routing=RoutingDecision.CLOUD,
             expert=self.name,
         )
-        brief = BriefOutput(content=result["content"])
+        brief = BriefOutput(content=content)
         if not brief.is_valid:
             logger.warning(
                 "morning_brief_quality_low links=%d words=%d",
-                brief.link_count, brief.word_count,
+                brief.link_count,
+                brief.word_count,
             )
         return brief.content
 
     async def stream_process(self, task: TaskRequest):  # type: ignore[override]  # noqa: ANN201
         """Token-by-token streaming — runs direct gateway call (subgraph streaming WIP)."""
-        import json
 
         from llm.gateway import get_gateway
         from search.arxiv import fetch_recent, format_papers
@@ -231,7 +249,9 @@ class IntelligenceExpert(BaseExpert):
 
         if task.routing == RoutingDecision.CLOUD:
             arxiv_papers, hf_papers = await asyncio.gather(
-                fetch_recent(max_results=5), fetch_daily_papers(), return_exceptions=True,
+                fetch_recent(max_results=5),
+                fetch_daily_papers(),
+                return_exceptions=True,
             )
             if isinstance(arxiv_papers, Exception):
                 logger.warning("stream_arxiv_failed", error=str(arxiv_papers))
@@ -257,14 +277,21 @@ class IntelligenceExpert(BaseExpert):
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             *history,
-            {"role": "user", "content": (
-                f"Live research data:\n{research_context}\n\n---\n{user_input}"
-                if research_context else user_input
-            )},
+            {
+                "role": "user",
+                "content": (
+                    f"Live research data:\n{research_context}\n\n---\n{user_input}"
+                    if research_context
+                    else user_input
+                ),
+            },
         ]
 
         async for chunk in gateway.stream_complete(
-            messages=messages, max_tokens=2048, routing=task.routing, expert=self.name,
+            messages=messages,
+            max_tokens=2048,
+            routing=task.routing,
+            expert=self.name,
         ):
             yield chunk
 
@@ -273,9 +300,10 @@ class IntelligenceExpert(BaseExpert):
             from llm.gateway import get_gateway
 
             result = await get_gateway().complete(
-                messages=[{"role": "user", "content": "ping"}], max_tokens=5,
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=5,
             )
-            return bool(result.get("content"))
+            return bool(result)
         except Exception:
             logger.warning("intelligence_health_check_failed", exc_info=True)
             return False

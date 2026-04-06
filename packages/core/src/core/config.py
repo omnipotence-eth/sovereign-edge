@@ -6,7 +6,7 @@ import logging
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
@@ -29,15 +29,27 @@ class Settings(BaseSettings):
 
     # Cloud API Keys (loaded from SOPS-decrypted env vars) — SecretStr prevents accidental logging
     groq_api_key: SecretStr = SecretStr("")
-    google_api_key: SecretStr = SecretStr("")
+    gemini_api_key: SecretStr = SecretStr("")   # SE_GEMINI_API_KEY
+    google_api_key: SecretStr = SecretStr("")   # legacy alias — prefer SE_GEMINI_API_KEY
     cerebras_api_key: SecretStr = SecretStr("")
     mistral_api_key: SecretStr = SecretStr("")
     telegram_bot_token: SecretStr = SecretStr("")
     telegram_owner_chat_id: str = ""
     discord_bot_token: SecretStr = SecretStr("")
     discord_owner_user_id: str = ""
-    alpha_vantage_key: SecretStr = SecretStr("")
     jina_api_key: SecretStr = SecretStr("")
+    fmp_api_key: SecretStr = SecretStr("")  # Financial Modeling Prep — earnings transcripts
+
+    # Observability and runtime
+    log_level: str = "INFO"   # DEBUG | INFO | WARNING | ERROR | CRITICAL
+    mem0_user_id: str = "john"  # Mem0 episodic memory namespace
+
+    # Router / classifier
+    router_confidence_threshold: float = 0.7
+    router_model_path: Path | None = None  # path to a .onnx router model; None = keyword fallback
+
+    # Voice service
+    stt_model: str = "base.en"  # faster-whisper: tiny.en, base.en, small.en, medium.en
 
     # Cloud API Rate Limits (requests per minute) — tune per deployment
     groq_rpm: int = 30
@@ -45,20 +57,84 @@ class Settings(BaseSettings):
     cerebras_rpm: int = 30
     mistral_rpm: int = 2
 
+    @field_validator("groq_rpm", "gemini_rpm", "cerebras_rpm", "mistral_rpm")
+    @classmethod
+    def _rpm_must_be_positive(cls, v: int) -> int:
+        if v < 1:
+            msg = f"RPM must be >= 1, got {v}"
+            raise ValueError(msg)
+        return v
+
+    @field_validator("log_level")
+    @classmethod
+    def _log_level_valid(cls, v: str) -> str:
+        valid = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+        if v.upper() not in valid:
+            msg = f"log_level must be one of {sorted(valid)}, got {v!r}"
+            raise ValueError(msg)
+        return v.upper()
+
+    def active_llm_providers(self) -> list[str]:
+        """Return litellm model strings for providers that have API keys configured.
+
+        Returned in priority order: Groq → Gemini → Cerebras → Mistral.
+        """
+        providers: list[str] = []
+        if self.groq_api_key.get_secret_value():
+            providers.append("groq/meta-llama/llama-4-scout-17b-16e-instruct")
+        gem_key = self.gemini_api_key.get_secret_value() or self.google_api_key.get_secret_value()
+        if gem_key:
+            providers.append("gemini/gemini-2.5-flash")
+        if self.cerebras_api_key.get_secret_value():
+            providers.append("cerebras/llama-3.3-70b")
+        if self.mistral_api_key.get_secret_value():
+            providers.append("mistral/mistral-small-latest")
+        return providers
+
+    def has_router_model(self) -> bool:
+        """Return True if a trained router .onnx model exists on disk."""
+        if self.router_model_path is None:
+            return False
+        return Path(self.router_model_path).exists()
+
     # Career Expert — override to target a different location/role
     career_target_location: str = "Dallas Fort Worth TX"
-    career_target_cities: str = "Dallas,Fort Worth,Plano,Irving,Frisco,Allen,McKinney,Richardson,Arlington,Southlake,Addison,Carrollton"
+    career_target_cities: str = "Dallas,Fort Worth,Plano,Irving,Frisco,Allen,McKinney,Richardson,Arlington,Southlake,Addison,Carrollton"  # noqa: E501
     career_target_roles: str = "ML Engineer, AI Engineer, LLM Engineer"
     career_differentiators: str = ""  # comma-separated; empty = generic coaching
 
     # Intelligence Expert — comma-separated repo topics for paper relevance scoring
-    # e.g. "bible-ai:rag,orpo,fine-tuning,graphrag; sovereign-edge:langgraph,agents,mcp; gpu-suite:inference,tensorrt,vllm"
-    repo_topics: str = "bible-ai:rag,orpo,fine-tuning,graphrag,retrieval; sovereign-edge:langgraph,agents,mcp,tool-use; gpu-suite:inference,tensorrt,vllm,exllamav2,quantization,benchmark,cuda"
+    # e.g. "bible-ai:rag,orpo,fine-tuning,graphrag; sovereign-edge:langgraph,agents,mcp; gpu-suite:inference,tensorrt,vllm"  # noqa: E501
+    repo_topics: str = "bible-ai:rag,orpo,fine-tuning,graphrag,retrieval; sovereign-edge:langgraph,agents,mcp,tool-use; gpu-suite:inference,tensorrt,vllm,exllamav2,quantization,benchmark,cuda"  # noqa: E501
+    # Market data watchlist and alert threshold
+    watchlist: list[str] = []  # e.g. ["NVDA", "MSFT", "AAPL"]
+    market_alert_threshold: float = 0.02  # 2% price move triggers an alert
+
+    # Goals Agent
+    goals_enabled: bool = True
+    goals_db_path: Path | None = None  # defaults to ssd_root/goals.db
+
+    # Web Dashboard (served on the health port)
+    dashboard_token: SecretStr = SecretStr("")  # set SE_DASHBOARD_TOKEN to enable
+
+    # WhatsApp via Twilio
+    whatsapp_enabled: bool = False
+    twilio_account_sid: SecretStr = SecretStr("")
+    twilio_auth_token: SecretStr = SecretStr("")
+    twilio_whatsapp_from: str = ""   # E.164 format, no "whatsapp:" prefix — e.g. "+14155238886"
+    whatsapp_owner_number: str = ""  # E.164 format, no "whatsapp:" prefix — e.g. "+12125551234"
+
+    # MCP Tool Server
+    mcp_enabled: bool = False
+    mcp_port: int = 3000
 
     # Feature Flags
     voice_enabled: bool = False
     creative_enabled: bool = True
     debug_mode: bool = False
+    # Self-improvement: run a quality critique pass after each CLOUD expert response.
+    # Adds ~1-2 s latency per call. Set SE_REFLECT_ENABLED=true to enable.
+    reflect_enabled: bool = False
 
     # Scheduling
     morning_wake_hour: int = 5
@@ -80,7 +156,9 @@ def log_startup_warnings() -> None:
 
     cloud_keys = {
         "SE_GROQ_API_KEY": s.groq_api_key.get_secret_value(),
-        "SE_GOOGLE_API_KEY": s.google_api_key.get_secret_value(),
+        "SE_GEMINI_API_KEY": (
+            s.gemini_api_key.get_secret_value() or s.google_api_key.get_secret_value()
+        ),
         "SE_CEREBRAS_API_KEY": s.cerebras_api_key.get_secret_value(),
         "SE_MISTRAL_API_KEY": s.mistral_api_key.get_secret_value(),
     }

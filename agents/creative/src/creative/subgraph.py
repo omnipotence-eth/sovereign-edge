@@ -79,6 +79,7 @@ _MORNING_SEARCH_QUERY = "AI content creation trends 2026 creator economy"
 
 # ── State ─────────────────────────────────────────────────────────────────────
 
+
 class CreativeState(TypedDict):
     # ── Inputs ────────────────────────────────────────────────────────────
     query: str
@@ -96,6 +97,7 @@ class CreativeState(TypedDict):
 
 
 # ── Nodes ─────────────────────────────────────────────────────────────────────
+
 
 async def _trend_researcher(state: CreativeState) -> dict[str, Any]:
     """Search for current trends relevant to the creative task (cloud-only)."""
@@ -155,17 +157,18 @@ async def _writer(state: CreativeState) -> dict[str, Any]:
     )
 
     return {
-        "response": result["content"],
-        "model_used": result.get("model", ""),
-        "tokens_in": result.get("tokens_in", 0),
-        "tokens_out": result.get("tokens_out", 0),
-        "cost_usd": result.get("cost_usd", 0.0),
+        "response": result,
+        "model_used": "",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "cost_usd": 0.0,
     }
 
 
 # ── Graph construction ────────────────────────────────────────────────────────
 
-def _build() -> Any:
+
+def _build() -> Any:  # noqa: ANN401
     builder: StateGraph = StateGraph(CreativeState)
 
     builder.add_node("trend_researcher", _trend_researcher)

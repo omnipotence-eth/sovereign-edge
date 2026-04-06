@@ -15,7 +15,10 @@ Commands:
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import functools
+import os
+import sys
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -169,7 +172,9 @@ class SovereignEdgeBot:
         await update.message.reply_text("🔍 Checking experts…")
         health = await self._orchestrator.health_check_all()
         lines = [f"{'✅' if ok else '❌'} <b>{name}</b>" for name, ok in sorted(health.items())]
-        text = "🏥 <b>Expert Health</b>\n\n" + "\n".join(lines) if lines else "No experts registered."
+        text = (
+            "🏥 <b>Expert Health</b>\n\n" + "\n".join(lines) if lines else "No experts registered."
+        )
         await update.message.reply_text(text, parse_mode="HTML")
 
     @_auth
@@ -375,14 +380,14 @@ class SovereignEdgeBot:
 
         if not text.strip():
             await update.message.reply_text(
-                "⚠️ Could not extract text from this file. "
-                "Supported formats: PDF, DOCX, TXT, MD."
+                "⚠️ Could not extract text from this file. Supported formats: PDF, DOCX, TXT, MD."
             )
             return
 
         # Determine intent from filename signal first, then content
         if any(kw in fname for kw in ("resume", "cv", "cover")):
             from core.types import Intent, RoutingDecision
+
             intent, routing = Intent.CAREER, RoutingDecision.CLOUD
             confidence = 0.9
         else:
@@ -402,7 +407,7 @@ class SovereignEdgeBot:
         )
 
         await update.message.reply_text(
-            f"📄 Processing _{doc.file_name}_ → *{intent.value.lower()}* expert…",
+            f"📄 Processing <i>{doc.file_name}</i> → <b>{intent.value.lower()}</b> expert…",
             parse_mode="HTML",
         )
 
@@ -452,7 +457,10 @@ class SovereignEdgeBot:
 
         logger.info(
             "document_handled fname=%s intent=%s confidence=%.2f chars=%d",
-            fname, intent.value, confidence, len(buffer),
+            fname,
+            intent.value,
+            confidence,
+            len(buffer),
         )
 
 
@@ -496,16 +504,6 @@ def _extract_file_text(path: object, fname: str) -> str:
 
     logger.info("unsupported_file_type ext=%s fname=%s", ext, fname)
     return ""
-
-
-async def _keep_typing(bot: Any, chat_id: int, stop: asyncio.Event) -> None:  # noqa: ANN401
-    """Refresh the typing indicator every 4 s until *stop* is set."""
-    while not stop.is_set():
-        try:
-            await bot.send_chat_action(chat_id=chat_id, action="typing")
-        except Exception:
-            logger.debug("typing_action_failed", exc_info=True)
-        await asyncio.sleep(4)
 
 
 def _sanitize_markdown(text: str) -> str:
@@ -612,12 +610,19 @@ async def _run() -> None:
 
     from career.expert import CareerExpert
     from creative.expert import CreativeExpert
+    from goals.expert import GoalExpert
     from intelligence.expert import IntelligenceExpert
     from orchestrator.main import Orchestrator
     from spiritual.expert import SpiritualExpert
 
     orch = Orchestrator(use_director=True)
-    for expert in (SpiritualExpert(), CareerExpert(), IntelligenceExpert(), CreativeExpert()):
+    for expert in (
+        SpiritualExpert(),
+        CareerExpert(),
+        IntelligenceExpert(),
+        CreativeExpert(),
+        GoalExpert(),
+    ):
         orch.register(expert)
 
     bot = SovereignEdgeBot(orch)
@@ -637,8 +642,33 @@ async def _run() -> None:
         await orch.stop()
 
 
+_LOCK_PATH = "/tmp/sovereign-edge-telegram.lock"  # noqa: S108
+
+
 def main() -> None:
+    """Entry point with single-instance guard via OS-level flock.
+
+    A second invocation will immediately exit rather than running a duplicate
+    bot. The lock is released automatically when the process exits (including
+    crashes and SIGKILL), so there is no stale-lock risk.
+    """
+    lock_fh = open(_LOCK_PATH, "w")
+    try:
+        fcntl.flock(lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print(
+            f"sovereign-edge-telegram already running (lock held: {_LOCK_PATH}). "
+            "Exiting to prevent duplicate bot.",
+            file=sys.stderr,
+        )
+        lock_fh.close()
+        sys.exit(1)
+
+    lock_fh.write(str(os.getpid()))
+    lock_fh.flush()
+
     asyncio.run(_run())
+    # Lock released when process exits and lock_fh is closed by the OS
 
 
 if __name__ == "__main__":

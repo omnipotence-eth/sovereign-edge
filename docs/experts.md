@@ -162,6 +162,40 @@ Runs at 05:15 (configurable via `SE_MORNING_WAKE_HOUR` / `SE_TIMEZONE`). Fetches
 
 ---
 
+## Goals Expert
+
+**Intent:** `GOALS`
+
+A personal accountability coach backed by a persistent SQLite goal store. Tracks goals with deadlines and progress percentages, surfaces the most urgent ones each morning, and generates one concrete action item per day.
+
+### Data Sources
+
+All data is local — no external API calls. Goals are stored in `SE_GOALS_DB_PATH` (default `data/goals.db`) using WAL-mode SQLite with a threading lock for safe concurrent access.
+
+### Capabilities
+
+- Goal creation: add a titled goal with optional description and target date
+- Progress tracking: update completion percentage (0–100, clamped)
+- Status management: mark goals as `active`, `paused`, or `complete`
+- Urgent retrieval: surface the top 3 goals sorted by proximity to target date
+- Daily coaching: provide one specific action step toward the most urgent goal
+
+### Morning Brief
+
+Runs at 07:30. Fetches the top 3 active goals sorted by urgency (closest `target_date`), formats a check-in with completion percentages, and appends an LLM-generated action item for the day. Silently skips delivery when no active goals exist.
+
+### Response Format
+
+```
+Goals for today:
+1. Land ML Engineer role (45% complete, due 2026-06-01)
+2. Finish Sovereign Edge v1.0 (70% complete, due 2026-05-01)
+
+Action: Apply to one Capital One ML posting today and tailor the resume summary.
+```
+
+---
+
 ## PII Routing
 
 All experts respect the routing decision set by the PII detector. If the user's message contains SSN, credit card, email, phone, or IP address patterns, routing is forced to `LOCAL` and no external data sources (Jina, arXiv, HuggingFace, Bible API) are called. The response comes from the local Ollama model only.

@@ -15,6 +15,7 @@ on similar-but-different questions, loose enough to catch rephrased repeats.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -46,13 +47,14 @@ class SemanticCache:
             self._available = True
             logger.info("semantic_cache_initialized db=%s", db_path)
         except Exception as exc:
-            logger.warning("semantic_cache_unavailable: %s", exc)
+            logger.warning("semantic_cache_unavailable: %s", exc, exc_info=True)
 
     async def lookup(self, query: str, expert: str = "") -> dict[str, Any] | None:
         """
         Check cache for a semantically similar query.
 
-        Returns a result dict (same shape as LLMGateway.complete()) or None on miss.
+        Returns a dict with ``content``, ``model``, ``tokens_in``, ``tokens_out``,
+        ``latency_ms``, and ``cost_usd`` keys, or None on miss.
         """
         if not self._available or self._db is None:
             return None
@@ -133,11 +135,14 @@ class SemanticCache:
 
 
 _instance: SemanticCache | None = None
+_instance_lock = threading.Lock()
 
 
 def get_cache() -> SemanticCache:
-    """Module-level singleton."""
+    """Thread-safe module-level singleton."""
     global _instance
     if _instance is None:
-        _instance = SemanticCache()
+        with _instance_lock:
+            if _instance is None:
+                _instance = SemanticCache()
     return _instance

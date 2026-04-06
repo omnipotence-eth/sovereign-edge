@@ -78,17 +78,15 @@ class EpisodicMemory:
         """Non-blocking add — runs Mem0's sync extraction in a thread-pool executor.
 
         Prefer this over add() in async call sites. Mem0's Ollama LLM + embedding
-        calls take 200–800 ms and must not stall the asyncio event loop.
+        calls take 200-800 ms and must not stall the asyncio event loop.
         """
         if not self._available or not self._memory:
             return
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(
                 None,
-                functools.partial(
-                    self._memory.add, text, user_id=user_id, metadata=metadata or {}
-                ),
+                functools.partial(self._memory.add, text, user_id=user_id, metadata=metadata or {}),
             )
         except Exception as e:
             logger.error("Failed to add memory (async): %s", e, exc_info=True)
@@ -110,7 +108,7 @@ class EpisodicMemory:
         """Non-blocking search — runs Mem0's sync embedding + retrieval in executor."""
         if not self._available or not self._memory:
             return []
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             results = await loop.run_in_executor(
                 None,

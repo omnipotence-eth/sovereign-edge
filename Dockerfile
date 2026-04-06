@@ -25,11 +25,16 @@ COPY packages/router/pyproject.toml       packages/router/pyproject.toml
 COPY packages/search/pyproject.toml       packages/search/pyproject.toml
 COPY agents/career/pyproject.toml         agents/career/pyproject.toml
 COPY agents/creative/pyproject.toml       agents/creative/pyproject.toml
+COPY agents/director/pyproject.toml       agents/director/pyproject.toml
+COPY agents/goals/pyproject.toml          agents/goals/pyproject.toml
 COPY agents/intelligence/pyproject.toml   agents/intelligence/pyproject.toml
 COPY agents/orchestrator/pyproject.toml   agents/orchestrator/pyproject.toml
 COPY agents/spiritual/pyproject.toml      agents/spiritual/pyproject.toml
-COPY services/telegram/pyproject.toml     services/telegram/pyproject.toml
+COPY services/discord/pyproject.toml      services/discord/pyproject.toml
 COPY services/health/pyproject.toml       services/health/pyproject.toml
+COPY services/mcp/pyproject.toml          services/mcp/pyproject.toml
+COPY services/telegram/pyproject.toml     services/telegram/pyproject.toml
+COPY services/whatsapp/pyproject.toml     services/whatsapp/pyproject.toml
 
 # Copy all source (needed by hatchling editable installs)
 COPY packages/ packages/
@@ -45,6 +50,10 @@ RUN uv sync --no-dev --all-packages
 # Lean image: only .venv + src trees, no build tools
 # ============================================================
 FROM python:3.13.2-slim AS runtime
+
+LABEL org.opencontainers.image.title="sovereign-edge" \
+      org.opencontainers.image.version="0.3.1" \
+      org.opencontainers.image.source="https://github.com/omnipotence-eth/sovereign-edge"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \

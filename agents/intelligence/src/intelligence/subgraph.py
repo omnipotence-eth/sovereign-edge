@@ -46,12 +46,32 @@ logger = logging.getLogger(__name__)
 
 # ── Relevance keywords for the ranker node ────────────────────────────────────
 
-_RELEVANCE_KEYWORDS: frozenset[str] = frozenset({
-    "fine-tuning", "lora", "qlora", "grpo", "rlhf", "dpo", "orpo",
-    "inference", "vllm", "tensorrt", "quantization", "flash attention",
-    "agent", "langgraph", "mcp", "tool use", "reasoning",
-    "llm", "transformer", "diffusion", "multimodal", "benchmark",
-})
+_RELEVANCE_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "fine-tuning",
+        "lora",
+        "qlora",
+        "grpo",
+        "rlhf",
+        "dpo",
+        "orpo",
+        "inference",
+        "vllm",
+        "tensorrt",
+        "quantization",
+        "flash attention",
+        "agent",
+        "langgraph",
+        "mcp",
+        "tool use",
+        "reasoning",
+        "llm",
+        "transformer",
+        "diffusion",
+        "multimodal",
+        "benchmark",
+    }
+)
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
 
@@ -100,6 +120,7 @@ Be specific. Cite paper titles and link them.\
 
 # ── Output validator ──────────────────────────────────────────────────────────
 
+
 class BriefOutput(BaseModel):
     """Validates structural quality of an intelligence brief before delivery."""
 
@@ -117,6 +138,7 @@ class BriefOutput(BaseModel):
 
 
 # ── Structured output models ──────────────────────────────────────────────────
+
 
 class PaperEntry(BaseModel):
     """One paper in the intelligence brief."""
@@ -171,11 +193,12 @@ def format_intel_brief(brief: IntelBriefResponse, repo_relevant: list[dict]) -> 
 
 # ── State ─────────────────────────────────────────────────────────────────────
 
+
 class IntelligenceState(TypedDict):
     # ── Inputs ────────────────────────────────────────────────────────────
     query: str
-    routing: str                              # RoutingDecision value
-    history: list[dict[str, str]]             # prior conversation turns
+    routing: str  # RoutingDecision value
+    history: list[dict[str, str]]  # prior conversation turns
     is_morning_brief: bool
     # ── Intermediate ──────────────────────────────────────────────────────
     # operator.add merges parallel writes from arxiv_fetcher + hf_fetcher
@@ -192,6 +215,7 @@ class IntelligenceState(TypedDict):
 
 
 # ── Nodes ─────────────────────────────────────────────────────────────────────
+
 
 async def _arxiv_fetcher(state: IntelligenceState) -> dict[str, Any]:
     """Fetch recent AI/ML papers from arXiv (cloud-only)."""
@@ -231,21 +255,25 @@ async def _hf_fetcher(state: IntelligenceState) -> dict[str, Any]:
 _flashrank_ranker: Any = None
 
 
-def _get_flashrank() -> Any:
+def _get_flashrank() -> Any:  # noqa: ANN401
     global _flashrank_ranker
     if _flashrank_ranker is None:
         try:
+            import tempfile
+            from pathlib import Path
+
             from flashrank import Ranker
 
             _flashrank_ranker = Ranker(
-                model_name="ms-marco-MiniLM-L-4-v2", cache_dir="/tmp/flashrank"
+                model_name="ms-marco-MiniLM-L-4-v2",
+                cache_dir=str(Path(tempfile.gettempdir()) / "flashrank"),
             )
             logger.info("intel_flashrank_loaded")
         except ImportError:
             _flashrank_ranker = False
             logger.debug("intel_flashrank_unavailable — using keyword fallback")
         except Exception:
-            # Catches model download failures, ONNX runtime errors, /tmp permission issues
+            # Catches model download failures, ONNX runtime errors, temp-dir permission issues
             _flashrank_ranker = False
             logger.warning("intel_flashrank_init_failed — using keyword fallback", exc_info=True)
     return _flashrank_ranker if _flashrank_ranker else None
@@ -258,6 +286,7 @@ def _parse_repo_topics() -> dict[str, list[str]]:
     """
     try:
         from core.config import get_settings
+
         raw = get_settings().repo_topics.strip()
     except Exception:
         return {}
@@ -346,6 +375,7 @@ def _ranker(state: IntelligenceState) -> dict[str, Any]:
 
 def _keyword_rank(papers: list[dict]) -> list[dict]:
     """Rank papers by keyword hit count. Returns top 8."""
+
     def _score(paper: dict) -> int:
         text = (paper.get("title", "") + " " + paper.get("summary", "")).lower()
         return sum(1 for kw in _RELEVANCE_KEYWORDS if kw in text)
@@ -368,9 +398,7 @@ async def _synthesizer(state: IntelligenceState) -> dict[str, Any]:
         try:
             from search.arxiv import format_papers
 
-            research_context = "Recent AI/ML papers:\n" + format_papers(
-                state["ranked_papers"]
-            )
+            research_context = "Recent AI/ML papers:\n" + format_papers(state["ranked_papers"])
         except Exception:
             logger.warning("intel_format_papers_failed", exc_info=True)
 
@@ -433,7 +461,7 @@ async def _synthesizer(state: IntelligenceState) -> dict[str, Any]:
         expert="intelligence",
     )
 
-    brief = BriefOutput(content=result["content"])
+    brief = BriefOutput(content=result)
     if not brief.is_valid:
         logger.warning(
             "intel_brief_quality_low links=%d words=%d",
@@ -442,17 +470,18 @@ async def _synthesizer(state: IntelligenceState) -> dict[str, Any]:
         )
 
     return {
-        "response": result["content"],
-        "model_used": result.get("model", ""),
-        "tokens_in": result.get("tokens_in", 0),
-        "tokens_out": result.get("tokens_out", 0),
-        "cost_usd": result.get("cost_usd", 0.0),
+        "response": result,
+        "model_used": "",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "cost_usd": 0.0,
     }
 
 
 # ── Graph construction ────────────────────────────────────────────────────────
 
-def _build() -> Any:
+
+def _build() -> Any:  # noqa: ANN401
     builder: StateGraph = StateGraph(IntelligenceState)
 
     builder.add_node("arxiv_fetcher", _arxiv_fetcher)

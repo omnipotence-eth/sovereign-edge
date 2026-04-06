@@ -9,10 +9,11 @@ Falls back to a direct gateway call when LangGraph is unavailable.
 
 from __future__ import annotations
 
+import json
 import time
 
 from core.expert import BaseExpert
-from core.types import RoutingDecision, ExpertName, TaskRequest, TaskResult
+from core.types import ExpertName, RoutingDecision, TaskRequest, TaskResult
 from observability.logging import get_logger
 
 from creative.subgraph import (
@@ -39,7 +40,6 @@ class CreativeExpert(BaseExpert):
         return await self._process_direct(task, t0)
 
     async def _process_via_subgraph(self, task: TaskRequest, t0: float) -> TaskResult:
-        import json
 
         history: list[dict[str, str]] = []
         if history_json := task.context.get("history"):
@@ -48,18 +48,26 @@ class CreativeExpert(BaseExpert):
             except (ValueError, TypeError):
                 pass
 
-        result = await creative_subgraph.ainvoke({
-            "query": task.content,
-            "routing": task.routing,
-            "history": history,
-            "is_morning_brief": False,
-            "trend_context": "",
-            "response": "",
-            "model_used": "",
-            "tokens_in": 0,
-            "tokens_out": 0,
-            "cost_usd": 0.0,
-        })
+        try:
+            result = await creative_subgraph.ainvoke(
+                {
+                    "query": task.content,
+                    "routing": task.routing,
+                    "history": history,
+                    "is_morning_brief": False,
+                    "trend_context": "",
+                    "response": "",
+                    "model_used": "",
+                    "tokens_in": 0,
+                    "tokens_out": 0,
+                    "cost_usd": 0.0,
+                }
+            )
+        except Exception:
+            logger.warning(
+                "creative_subgraph_invoke_failed — falling back to direct", exc_info=True
+            )  # noqa: E501
+            return await self._process_direct(task, t0)
 
         return TaskResult(
             task_id=task.task_id,
@@ -76,7 +84,6 @@ class CreativeExpert(BaseExpert):
 
     async def _process_direct(self, task: TaskRequest, t0: float) -> TaskResult:
         """Fallback: single LLM call when LangGraph is unavailable."""
-        import json
 
         from llm.gateway import get_gateway
         from search.jina import search as jina_search
@@ -86,7 +93,8 @@ class CreativeExpert(BaseExpert):
 
         if task.routing == RoutingDecision.CLOUD:
             trend_context = await jina_search(
-                f"{task.content} content strategy examples 2026", max_results=3,
+                f"{task.content} content strategy examples 2026",
+                max_results=3,
             )
 
         history: list[dict[str, str]] = []
@@ -100,43 +108,57 @@ class CreativeExpert(BaseExpert):
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             *history,
-            {"role": "user", "content": (
-                f"Current trends and context:\n{trend_context}\n\n---\n{user_input}"
-                if trend_context else user_input
-            )},
+            {
+                "role": "user",
+                "content": (
+                    f"Current trends and context:\n{trend_context}\n\n---\n{user_input}"
+                    if trend_context
+                    else user_input
+                ),
+            },
         ]
 
-        result = await gateway.complete(
-            messages=messages, max_tokens=2048, routing=task.routing, expert=self.name,
+        content = await gateway.complete(
+            messages=messages,
+            max_tokens=2048,
+            routing=task.routing,
+            expert=self.name,
         )
 
         return TaskResult(
             task_id=task.task_id,
             expert=ExpertName.CREATIVE,
-            content=result["content"],
-            model_used=result["model"],
-            tokens_in=result["tokens_in"],
-            tokens_out=result["tokens_out"],
+            content=content,
+            model_used="",
+            tokens_in=0,
+            tokens_out=0,
             latency_ms=(time.monotonic() - t0) * 1000,
-            cost_usd=result["cost_usd"],
+            cost_usd=0.0,
             routing=task.routing,
         )
 
     async def morning_brief(self) -> str:
         if creative_subgraph is not None:
-            result = await creative_subgraph.ainvoke({
-                "query": "",
-                "routing": RoutingDecision.CLOUD,
-                "history": [],
-                "is_morning_brief": True,
-                "trend_context": "",
-                "response": "",
-                "model_used": "",
-                "tokens_in": 0,
-                "tokens_out": 0,
-                "cost_usd": 0.0,
-            })
-            return result["response"]
+            try:
+                result = await creative_subgraph.ainvoke(
+                    {
+                        "query": "",
+                        "routing": RoutingDecision.CLOUD,
+                        "history": [],
+                        "is_morning_brief": True,
+                        "trend_context": "",
+                        "response": "",
+                        "model_used": "",
+                        "tokens_in": 0,
+                        "tokens_out": 0,
+                        "cost_usd": 0.0,
+                    }
+                )
+                return result["response"]
+            except Exception:
+                logger.warning(
+                    "creative_subgraph_morning_brief_failed — using direct", exc_info=True
+                )  # noqa: E501
 
         # Fallback
         from llm.gateway import get_gateway
@@ -144,31 +166,36 @@ class CreativeExpert(BaseExpert):
 
         gateway = get_gateway()
         trend_context = await jina_search(
-            "AI content creation trends 2026 creator economy", max_results=3,
+            "AI content creation trends 2026 creator economy",
+            max_results=3,
         )
 
-        result = await gateway.complete(
+        return await gateway.complete(
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": (
-                    f"Current trends and context:\n{trend_context}\n\n---\n{MORNING_PROMPT}"
-                    if trend_context else MORNING_PROMPT
-                )},
+                {
+                    "role": "user",
+                    "content": (
+                        f"Current trends and context:\n{trend_context}\n\n---\n{MORNING_PROMPT}"
+                        if trend_context
+                        else MORNING_PROMPT
+                    ),
+                },
             ],
             max_tokens=150,
             routing=RoutingDecision.CLOUD,
             expert=self.name,
         )
-        return result["content"]
 
     async def health_check(self) -> bool:
         try:
             from llm.gateway import get_gateway
 
             result = await get_gateway().complete(
-                messages=[{"role": "user", "content": "ping"}], max_tokens=5,
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=5,
             )
-            return bool(result.get("content"))
+            return bool(result)
         except Exception:
             logger.warning("creative_health_check_failed", exc_info=True)
             return False

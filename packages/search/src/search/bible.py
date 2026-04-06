@@ -70,9 +70,17 @@ def _get_client() -> httpx.AsyncClient:
 
 
 def extract_reference(text: str) -> str | None:
-    """Try to extract a scripture reference from free text."""
+    """Try to extract a scripture reference from free text.
+
+    Returns None for bare book names (e.g. "Proverbs", "prov") — bible-api.com
+    requires at least a chapter number; bare names 404.
+    """
     match = _REF_PATTERN.search(text)
-    return match.group(0).strip() if match else None
+    if match is None:
+        return None
+    ref = match.group(0).strip()
+    # Require at least a chapter digit — bare book names produce 404 on bible-api.com
+    return ref if any(c.isdigit() for c in ref) else None
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -104,11 +112,17 @@ async def random_verse() -> dict[str, str]:
 async def lookup(reference: str | None) -> dict[str, str]:
     """Look up a verse or passage (e.g. 'John 3:16', 'Psalm 23', '1 Cor 13:4-7').
 
-    Returns empty result dict when reference is None or empty.
+    Returns empty result dict when reference is None, empty, or fails validation.
+    Input is validated against _REF_PATTERN before URL construction to prevent
+    path traversal or query injection via user-supplied reference strings.
     """
     if not reference:
         return {"reference": "", "text": "", "translation": ""}
-    clean = reference.strip().replace(" ", "+")
+    ref_stripped = reference.strip()
+    if not _REF_PATTERN.match(ref_stripped):
+        logger.warning("bible_lookup_invalid_reference ref=%r", ref_stripped[:50])
+        return {"reference": "", "text": "", "translation": ""}
+    clean = ref_stripped.replace(" ", "+")
     client = _get_client()
     url = f"{_BASE}/{clean}?translation={_TRANSLATION}"
 

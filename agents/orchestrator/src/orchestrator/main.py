@@ -13,6 +13,7 @@ Schedule:
   05:30 — intelligence brief → Telegram
   06:00 — career brief → Telegram
   07:00 — creative brief → Telegram
+  07:30 — goals check-in → Telegram
   18:00 — career rescan → Telegram
 
 All task completions are traced to SQLite for /stats observability.
@@ -48,6 +49,11 @@ class Orchestrator:
         self._trace_store = TraceStore()
         self._use_director = use_director
         self._director: Any = None  # DirectorGraph — loaded lazily after experts register
+        # Tracks the last handled intent per chat — used by the feedback signal loop
+        # to know which skill to reinforce when the user says "thanks" or "wrong".
+        self._last_intent_by_chat: dict[str, str] = {}
+        # Background tasks (skill extraction) — kept alive to prevent GC before completion.
+        self._bg_tasks: set[asyncio.Task[None]] = set()
 
     # ------------------------------------------------------------------ #
     # Public properties                                                    #
@@ -83,7 +89,33 @@ class Orchestrator:
 
     async def dispatch(self, request: TaskRequest) -> TaskResult:
         """Route *request* to the appropriate expert and trace the result."""
+        # Sanitize user input before any prompt injection reaches an expert or cache
+        from core.security import sanitize_input
+
+        request = request.model_copy(update={"content": sanitize_input(request.content)})
+
         chat_id = request.context.get("chat_id", "")
+
+        # ── 0. Implicit feedback detection ──────────────────────────────────
+        # Check if this message is a feedback signal ("thanks", "wrong", etc.)
+        # before routing — update SkillLibrary scores without blocking dispatch.
+        if chat_id and chat_id in self._last_intent_by_chat:
+            try:
+                from memory.feedback import detect_feedback_signal
+                from memory.skill_library import SkillLibrary
+
+                signal = detect_feedback_signal(request.content)
+                if signal is not None:
+                    last_intent = self._last_intent_by_chat[chat_id]
+                    SkillLibrary().record_outcome(last_intent, success=(signal == "positive"))
+                    logger.info(
+                        "feedback_signal_recorded chat_id=%s intent=%s signal=%s",
+                        chat_id,
+                        last_intent,
+                        signal,
+                    )
+            except Exception:
+                logger.debug("feedback_signal_handling_failed", exc_info=True)
 
         # ── 1. Inject conversation history as prior message turns ───────
         if chat_id:
@@ -105,7 +137,9 @@ class Orchestrator:
             try:
                 from memory.semantic_cache import get_cache
 
-                cached = await get_cache().lookup(request.content, expert="")
+                cached = await get_cache().lookup(
+                    request.content, expert=self._resolve_expert(request)
+                )
                 if cached is not None:
                     result = TaskResult(
                         task_id=request.task_id,
@@ -151,8 +185,51 @@ class Orchestrator:
                 )
             result = await expert.process(request)
 
+            # Track intent so the next message can be scored as feedback
+            if chat_id:
+                self._last_intent_by_chat[chat_id] = request.intent.value
+
+            # ── 3a. Reflection + skill auto-extraction ───────────────────
+            # Only for CLOUD-routed, non-cached responses (latency acceptable).
+            # Gated by SE_REFLECT_ENABLED so operator controls the extra LLM cost.
+            if (
+                self._settings.reflect_enabled
+                and request.routing == RoutingDecision.CLOUD
+                and not result.cached
+                and result.content
+            ):
+                try:
+                    from core.reflection import ReflectionResult, reflect_response
+
+                    reflection: ReflectionResult | None = await reflect_response(
+                        query=request.content,
+                        response=result.content,
+                        intent=request.intent.value,
+                        expert=expert_name,
+                    )
+                    if reflection is not None:
+                        if reflection.improved and reflection.improved_response.strip():
+                            result = result.model_copy(
+                                update={"content": reflection.improved_response}
+                            )
+                        # Auto-extract skill pattern when quality is high
+                        if reflection.score >= 4:
+                            task = asyncio.create_task(
+                                self._extract_and_store_skill(
+                                    result.content, request.intent.value
+                                )
+                            )
+                            self._bg_tasks.add(task)
+                            task.add_done_callback(self._bg_tasks.discard)
+                except Exception:
+                    logger.debug("reflection_integration_failed", exc_info=True)
+
         # ── 4. Store result in semantic cache ───────────────────────────
-        if request.routing == RoutingDecision.CLOUD and not result.cached and request.intent != Intent.INTELLIGENCE:
+        if (
+            request.routing == RoutingDecision.CLOUD
+            and not result.cached
+            and request.intent != Intent.INTELLIGENCE
+        ):
             try:
                 from memory.semantic_cache import get_cache
 
@@ -194,6 +271,11 @@ class Orchestrator:
         from the expert's stream_process() so the bot can edit messages live.
         Cache hits and local-routing results are yielded as single chunks.
         """
+        # Sanitize user input before any prompt injection reaches an expert or cache
+        from core.security import sanitize_input
+
+        request = request.model_copy(update={"content": sanitize_input(request.content)})
+
         chat_id = request.context.get("chat_id", "")
 
         # ── 1. Inject conversation history ──────────────────────────────
@@ -214,7 +296,9 @@ class Orchestrator:
             try:
                 from memory.semantic_cache import get_cache
 
-                cached = await get_cache().lookup(request.content, expert="")
+                cached = await get_cache().lookup(
+                    request.content, expert=self._resolve_expert(request)
+                )
                 if cached is not None:
                     result = TaskResult(
                         task_id=request.task_id,
@@ -237,11 +321,17 @@ class Orchestrator:
         if self._director is not None:
             result = await self._director.run(request)
 
-            if request.routing == RoutingDecision.CLOUD and not result.cached and request.intent != Intent.INTELLIGENCE:
+            if (
+                request.routing == RoutingDecision.CLOUD
+                and not result.cached
+                and request.intent != Intent.INTELLIGENCE
+            ):
                 try:
                     from memory.semantic_cache import get_cache
 
-                    await get_cache().store(request.content, result.content, expert=str(result.expert))
+                    await get_cache().store(
+                        request.content, result.content, expert=str(result.expert)
+                    )
                 except Exception:
                     logger.debug("stream_cache_store_failed", exc_info=True)
 
@@ -282,48 +372,49 @@ class Orchestrator:
             return
 
         full_content = ""
-        async for chunk in expert.stream_process(request):
-            full_content += chunk
-            yield chunk
+        try:
+            async for chunk in expert.stream_process(request):
+                full_content += chunk
+                yield chunk
+        finally:
+            # ── 4-6. Post-stream bookkeeping — runs on normal completion AND exception ──
+            if request.routing == RoutingDecision.CLOUD and request.intent != Intent.INTELLIGENCE:
+                try:
+                    from memory.semantic_cache import get_cache
 
-        # ── 4–6. Post-stream bookkeeping (same as dispatch) ─────────────
-        if request.routing == RoutingDecision.CLOUD and request.intent != Intent.INTELLIGENCE:
-            try:
-                from memory.semantic_cache import get_cache
+                    await get_cache().store(request.content, full_content, expert=expert_name)
+                except Exception:
+                    logger.debug("stream_cache_store_failed", exc_info=True)
 
-                await get_cache().store(request.content, full_content, expert=expert_name)
-            except Exception:
-                logger.debug("stream_cache_store_failed", exc_info=True)
+            if chat_id:
+                try:
+                    from memory.conversation import get_conversation_store
 
-        if chat_id:
-            try:
-                from memory.conversation import get_conversation_store
+                    store = get_conversation_store()
+                    store.add_turn(chat_id, "user", request.content)
+                    store.add_turn(chat_id, "assistant", full_content, expert=expert_name)
+                except Exception:
+                    logger.debug("stream_history_store_failed", exc_info=True)
 
-                store = get_conversation_store()
-                store.add_turn(chat_id, "user", request.content)
-                store.add_turn(chat_id, "assistant", full_content, expert=expert_name)
-            except Exception:
-                logger.debug("stream_history_store_failed", exc_info=True)
+            if chat_id:
+                try:
+                    from memory.episodic import get_episodic_memory
 
-        if chat_id:
-            try:
-                from memory.episodic import get_episodic_memory
+                    await get_episodic_memory().add_async(
+                        f"User: {request.content}\nAssistant: {full_content}",
+                        user_id=chat_id,
+                    )
+                except Exception:
+                    logger.debug("stream_episodic_add_failed", exc_info=True)
 
-                await get_episodic_memory().add_async(
-                    f"User: {request.content}\nAssistant: {full_content}",
-                    user_id=chat_id,
-                )
-            except Exception:
-                logger.debug("stream_episodic_add_failed", exc_info=True)
-
-        result = TaskResult(
-            task_id=request.task_id,
-            expert=ExpertName(expert_name),
-            content=full_content,
-            model_used="stream",
-            routing=request.routing,
-        )
-        self._trace_store.record(result)
+            result = TaskResult(
+                task_id=request.task_id,
+                expert=ExpertName(expert_name),
+                content=full_content,
+                model_used="stream",
+                routing=request.routing,
+            )
+            self._trace_store.record(result)
 
     def _resolve_expert(self, request: TaskRequest) -> str:
         intent_map = {
@@ -331,9 +422,30 @@ class Orchestrator:
             Intent.CAREER: ExpertName.CAREER,
             Intent.INTELLIGENCE: ExpertName.INTELLIGENCE,
             Intent.CREATIVE: ExpertName.CREATIVE,
+            Intent.GOALS: ExpertName.GOALS,
             Intent.GENERAL: ExpertName.INTELLIGENCE,  # general → intelligence
         }
         return intent_map.get(request.intent, ExpertName.INTELLIGENCE)
+
+    # ------------------------------------------------------------------ #
+    # Self-improvement helpers                                            #
+    # ------------------------------------------------------------------ #
+
+    async def _extract_and_store_skill(self, response: str, intent: str) -> None:
+        """Background task: extract a reusable technique and add to SkillLibrary.
+
+        Called as a fire-and-forget asyncio task after reflection scores >= 4.
+        Failure is completely silent — never impacts the user-facing response path.
+        """
+        try:
+            from memory.feedback import extract_skill_pattern
+            from memory.skill_library import SkillLibrary
+
+            pattern = await extract_skill_pattern(response, intent)
+            if pattern:
+                SkillLibrary().add_skill(intent, pattern)
+        except Exception:
+            logger.debug("skill_auto_extraction_failed intent=%s", intent, exc_info=True)
 
     # ------------------------------------------------------------------ #
     # Observability                                                        #
@@ -428,6 +540,10 @@ class Orchestrator:
         """07:00 — content strategy direction."""
         await self._send_brief("creative", "✍️", "Creative Direction")
 
+    async def _goals_brief(self) -> None:
+        """07:30 — personal goals check-in (skipped when no active goals)."""
+        await self._send_brief("goals", "🎯", "Goals Check-in")
+
     async def _career_rescan_brief(self) -> None:
         """18:00 — evening job scan."""
         await self._send_brief("career", "💼", "Evening Job Scan")
@@ -438,23 +554,45 @@ class Orchestrator:
 
     def _register_jobs(self) -> None:
         tz = self._settings.timezone
-        jobs: list[tuple[Any, str, str]] = [
-            (self._morning_health_check, "05", "00"),
-            (self._spiritual_brief, "05", "15"),
-            (self._intelligence_brief, "05", "30"),
-            (self._career_brief, "06", "00"),
-            (self._creative_brief, "07", "00"),
-            (self._career_rescan_brief, "18", "00"),
+        wake_h = self._settings.morning_wake_hour
+        wake_m = self._settings.morning_wake_minute
+
+        def _offset(extra_minutes: int) -> tuple[int, int]:
+            total = wake_h * 60 + wake_m + extra_minutes
+            return total // 60 % 24, total % 60
+
+        h0, m0 = _offset(0)
+        h15, m15 = _offset(15)
+        h30, m30 = _offset(30)
+        h60, m60 = _offset(60)
+        h120, m120 = _offset(120)
+        h150, m150 = _offset(150)
+
+        # Career rescan is absolute 18:00 (regardless of wake hour)
+        jobs: list[tuple[Any, int, int]] = [
+            (self._morning_health_check, h0, m0),
+            (self._spiritual_brief, h15, m15),
+            (self._intelligence_brief, h30, m30),
+            (self._career_brief, h60, m60),
+            (self._creative_brief, h120, m120),
+            (self._goals_brief, h150, m150),
+            (self._career_rescan_brief, 18, 0),
         ]
         for fn, hour, minute in jobs:
             self._scheduler.add_job(
                 fn,
-                trigger=CronTrigger(hour=int(hour), minute=int(minute), timezone=tz),
+                trigger=CronTrigger(hour=hour, minute=minute, timezone=tz),
                 id=fn.__name__,
                 replace_existing=True,
                 misfire_grace_time=300,  # 5 min tolerance for delayed wake
             )
-        logger.info("scheduler_jobs_registered count=%d", len(jobs))
+        logger.info(
+            "scheduler_jobs_registered count=%d wake=%02d:%02d tz=%s",
+            len(jobs),
+            wake_h,
+            wake_m,
+            tz,
+        )
 
     # ------------------------------------------------------------------ #
     # Lifecycle                                                            #
@@ -475,12 +613,18 @@ class Orchestrator:
                 logger.info("director_initialized experts=%s", list(self._experts.keys()))
             except ImportError:
                 logger.warning(
-                    "director_import_failed — install sovereign-edge-director for multi-expert chains"
+                    "director_import_failed — install sovereign-edge-director for multi-expert chains"  # noqa: E501
                 )
         logger.info("orchestrator_started director=%s", self._use_director)
 
     async def stop(self) -> None:
-        self._scheduler.shutdown(wait=False)
+        # Cancel any in-flight skill-extraction background tasks
+        for task in list(self._bg_tasks):
+            task.cancel()
+        if self._bg_tasks:
+            await asyncio.gather(*self._bg_tasks, return_exceptions=True)
+
+        self._scheduler.shutdown(wait=True)
         try:
             from search.arxiv import aclose as arxiv_close
             from search.bible import aclose as bible_close
