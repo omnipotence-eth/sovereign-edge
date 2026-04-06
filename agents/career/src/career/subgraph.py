@@ -10,10 +10,12 @@ strategist    — LLM synthesizes search results into career advice / brief
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import logging
 from typing import Any
 
+import httpx
 from pydantic import BaseModel, Field, field_validator
 
 try:
@@ -31,6 +33,15 @@ except ImportError:  # pragma: no cover
     START = END = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
+
+# ── Constants ─────────────────────────────────────────────────────────────────
+
+# ATS platforms with stable, non-expiring job URLs (unlike LinkedIn/Indeed)
+_ATS_SITES = (
+    "site:greenhouse.io OR site:boards.greenhouse.io OR site:jobs.lever.co "
+    "OR site:wd1.myworkday.com OR site:jobs.ashbyhq.com OR site:icims.com"
+)
+_MAX_SEARCH_CHARS = 10_000  # merged cap across parallel Jina queries
 
 # ── Structured output models ───────────────────────────────────────────────────
 
@@ -194,14 +205,14 @@ def build_search_queries() -> list[str]:
     s = get_settings()
     location = s.career_target_location
     roles = s.career_target_roles.replace(", ", " OR ").replace(",", " OR ")
-    # Include current year/month so search engines surface recent postings.
-    # LinkedIn/Indeed deep-link URLs expire when a position is filled;
-    # the freshness signal biases results toward live listings.
     today = datetime.date.today()
     freshness = f"{today.year}-{today.month:02d}"
     return [
+        # Primary: target ATS platforms directly — greenhouse/lever/workday URLs are
+        # stable and don't expire when a position closes (unlike LinkedIn/Indeed).
+        f'({_ATS_SITES}) ({roles}) ("Dallas" OR "Plano" OR "Irving" OR "Fort Worth" OR "Texas" OR remote) {today.year}',  # noqa: E501
+        # Secondary: general freshness-filtered fallback
         f'("{roles}") ("{location}" OR "Dallas" OR "Plano" OR "Irving" OR "Frisco") hiring {freshness} -filled -expired',  # noqa: E501
-        f'machine learning engineer AI engineer "{location}" OR "Dallas TX" OR "Plano TX" jobs {today.year} -"New York" -"San Francisco" -"Seattle"',  # noqa: E501
     ]
 
 
@@ -228,7 +239,7 @@ class CareerState(TypedDict):
 
 
 async def _job_searcher(state: CareerState) -> dict[str, Any]:
-    """Search for live job listings and market data via Jina (cloud-only)."""
+    """Search for live job listings via Jina — ATS-targeted and general queries in parallel."""
     from core.types import RoutingDecision
 
     if state["routing"] != RoutingDecision.CLOUD:
@@ -237,25 +248,66 @@ async def _job_searcher(state: CareerState) -> dict[str, Any]:
         from search.jina import search as jina_search
 
         if state["is_morning_brief"]:
-            query = build_search_queries()[0]
+            queries = build_search_queries()
         else:
             from core.config import get_settings
 
             s = get_settings()
             location = s.career_target_location
             year = datetime.date.today().year
-            # Tighten location filter and add year for freshness
-            query = (
-                f'{state["query"]} ML Engineer AI job "{location}" OR "Dallas" OR "Plano" OR "Irving" '  # noqa: E501
-                f'{year} -"New York" -"San Francisco" -"Chicago" -"Seattle" -"Austin" -filled -expired'  # noqa: E501
-            )
+            queries = [
+                # ATS-targeted first — stable links from greenhouse/lever/workday
+                f'({_ATS_SITES}) {state["query"]} ML Engineer AI ("Texas" OR remote) {year}',
+                # General freshness-filtered fallback
+                f'{state["query"]} ML Engineer AI job "{location}" OR "Dallas" OR "Plano"'
+                f' OR "Irving" {year} -"New York" -"San Francisco" -"Chicago" -"Seattle" -"Austin" -filled -expired',  # noqa: E501
+            ]
 
-        results = await jina_search(query, max_results=5)
-        logger.info("career_job_searcher chars=%d", len(results))
-        return {"search_results": results}
+        raw = await asyncio.gather(
+            *[jina_search(q, max_results=4) for q in queries],
+            return_exceptions=True,
+        )
+        merged = "\n\n".join(r for r in raw if isinstance(r, str) and r)[:_MAX_SEARCH_CHARS]
+        logger.info("career_job_searcher queries=%d chars=%d", len(queries), len(merged))
+        return {"search_results": merged}
     except Exception:
         logger.warning("career_job_search_failed", exc_info=True)
         return {"search_results": ""}
+
+
+async def _check_url_live(url: str, client: httpx.AsyncClient) -> bool:
+    """HEAD-check a URL; returns True if non-4xx (or on any network error — fail open)."""
+    if not url or not url.startswith("http"):
+        return False
+    try:
+        resp = await client.head(url, follow_redirects=True)
+        return resp.status_code < 400
+    except Exception:
+        return True  # Fail open: keep listing if we can't reach the URL
+
+
+async def _validate_listings(listings: list[JobListing]) -> list[JobListing]:
+    """Drop listings whose apply_url returns a 4xx HTTP response.
+
+    Uses a single shared AsyncClient for all checks. Fails open (keeps listing)
+    on network errors so transient connectivity issues don't blank the response.
+    """
+    if not listings:
+        return listings
+    try:
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
+            checks = await asyncio.gather(
+                *[_check_url_live(j.apply_url, client) for j in listings],
+                return_exceptions=True,
+            )
+        live = [j for j, ok in zip(listings, checks, strict=False) if ok is True]
+        dropped = len(listings) - len(live)
+        if dropped:
+            logger.info("career_url_validation_dropped count=%d", dropped)
+        return live
+    except Exception:
+        logger.warning("career_url_validation_failed", exc_info=True)
+        return listings  # Don't blank the response on unexpected error
 
 
 async def _strategist(state: CareerState) -> dict[str, Any]:
@@ -301,10 +353,10 @@ async def _strategist(state: CareerState) -> dict[str, Any]:
         expert="career",
     )
     if structured is not None:
-        logger.info(
-            "career_strategist_structured jobs=%d",
-            len([j for j in structured.jobs if j.is_dfw_eligible]),
-        )
+        eligible = [j for j in structured.jobs if j.is_dfw_eligible]
+        eligible = await _validate_listings(eligible)
+        structured.jobs = eligible
+        logger.info("career_strategist_structured jobs=%d", len(eligible))
         return {
             "response": format_job_listings(structured),
             "model_used": "structured",
