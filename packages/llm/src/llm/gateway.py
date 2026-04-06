@@ -100,6 +100,7 @@ def _build_providers(s: Settings) -> list[ProviderConfig]:
             tpd=1_000_000,
             priority=3,
             env_key="CEREBRAS_API_KEY",
+            supports_structured=False,  # Model consistently 404 — disabled until Cerebras updates
         ),
         ProviderConfig(
             model="mistral/mistral-small-latest",
