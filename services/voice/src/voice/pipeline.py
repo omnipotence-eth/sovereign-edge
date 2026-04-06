@@ -15,6 +15,7 @@ Run as a foreground process on the Jetson:
 from __future__ import annotations
 
 import asyncio
+from typing import TYPE_CHECKING
 
 import structlog
 from core.config import Settings, get_settings
@@ -22,6 +23,9 @@ from core.config import Settings, get_settings
 from voice.stt import SpeechRecognizer
 from voice.tts import TextToSpeech
 from voice.wake import WakeWordDetector
+
+if TYPE_CHECKING:
+    from orchestrator.main import Orchestrator
 
 logger = structlog.get_logger(__name__)
 
@@ -35,6 +39,8 @@ class VoicePipeline:
 
     Parameters
     ----------
+    orchestrator:
+        Sovereign Edge Orchestrator instance for dispatching queries.
     settings:
         Application settings. Defaults to get_settings().
     wake_model_path:
@@ -50,12 +56,14 @@ class VoicePipeline:
 
     def __init__(
         self,
+        orchestrator: Orchestrator,
         settings: Settings | None = None,
         wake_model_path: str | None = None,
         tts_voice: str = "en_US-lessac-medium",
         whisper_model: str | None = None,
         thread_id: str = "voice_default",
     ) -> None:
+        self._orchestrator = orchestrator
         self._settings = settings or get_settings()
         self._wake = WakeWordDetector(model_path=wake_model_path)
         self._stt = SpeechRecognizer(model_size=whisper_model or self._settings.stt_model)
@@ -72,12 +80,22 @@ class VoicePipeline:
         }
 
     async def _run_turn(self, text: str) -> str:
-        """Send transcribed text through the LangGraph orchestrator."""
-        from orchestrator.graph import run_turn  # lazy import to avoid circular init
+        """Send transcribed text through the Sovereign Edge orchestrator."""
+        from core.types import TaskPriority, TaskRequest
+        from router.classifier import IntentRouter
 
         try:
-            response = await run_turn(text, thread_id=self._thread_id)
-            return response or _FALLBACK_ERROR
+            router = IntentRouter()
+            intent, _confidence, routing = await router.aroute(text)
+            request = TaskRequest(
+                content=text,
+                intent=intent,
+                priority=TaskPriority.NORMAL,
+                routing=routing,
+                context={"chat_id": self._thread_id},
+            )
+            result = await self._orchestrator.dispatch(request)
+            return result.content or _FALLBACK_ERROR
         except Exception:
             logger.error("voice.pipeline.orchestrator_failed", exc_info=True)
             return _FALLBACK_ERROR

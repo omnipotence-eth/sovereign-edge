@@ -1,0 +1,1 @@
+"""Sovereign Edge — Goals agent."""

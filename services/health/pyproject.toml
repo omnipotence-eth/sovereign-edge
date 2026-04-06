@@ -1,16 +1,19 @@
 [project]
 name = "sovereign-edge-health"
-version = "0.1.0"
-description = "Lightweight health / readiness endpoint for the sovereign-edge container"
+version = "0.2.0"
+description = "Health, readiness, and dashboard endpoints for the sovereign-edge container"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115,<1.0",
     "uvicorn[standard]>=0.32,<1.0",
+    "jinja2>=3.1,<4.0",
     "sovereign-edge-core",
+    "sovereign-edge-observability",
 ]
 
 [tool.uv.sources]
 sovereign-edge-core = { workspace = true }
+sovereign-edge-observability = { workspace = true }
 
 [project.scripts]
 # Start the health server directly: uv run health-server

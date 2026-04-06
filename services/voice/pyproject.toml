@@ -5,6 +5,9 @@ requires-python = ">=3.11"
 dependencies = [
     "sovereign-edge-core",
     "sovereign-edge-llm",
+    "sovereign-edge-observability",
+    "sovereign-edge-orchestrator",
+    "sovereign-edge-router",
     "numpy>=1.26,<2.0",
     "httpx>=0.27,<1.0",
 ]
@@ -36,6 +39,9 @@ full = [
 [tool.uv.sources]
 sovereign-edge-core = { workspace = true }
 sovereign-edge-llm = { workspace = true }
+sovereign-edge-observability = { workspace = true }
+sovereign-edge-orchestrator = { workspace = true }
+sovereign-edge-router = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

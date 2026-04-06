@@ -351,6 +351,7 @@ class Orchestrator:
             Intent.CAREER: ExpertName.CAREER,
             Intent.INTELLIGENCE: ExpertName.INTELLIGENCE,
             Intent.CREATIVE: ExpertName.CREATIVE,
+            Intent.GOALS: ExpertName.GOALS,
             Intent.GENERAL: ExpertName.INTELLIGENCE,  # general → intelligence
         }
         return intent_map.get(request.intent, ExpertName.INTELLIGENCE)
@@ -448,6 +449,10 @@ class Orchestrator:
         """07:00 — content strategy direction."""
         await self._send_brief("creative", "✍️", "Creative Direction")
 
+    async def _goals_brief(self) -> None:
+        """07:30 — personal goals check-in (skipped when no active goals)."""
+        await self._send_brief("goals", "🎯", "Goals Check-in")
+
     async def _career_rescan_brief(self) -> None:
         """18:00 — evening job scan."""
         await self._send_brief("career", "💼", "Evening Job Scan")
@@ -464,6 +469,7 @@ class Orchestrator:
             (self._intelligence_brief, "05", "30"),
             (self._career_brief, "06", "00"),
             (self._creative_brief, "07", "00"),
+            (self._goals_brief, "07", "30"),
             (self._career_rescan_brief, "18", "00"),
         ]
         for fn, hour, minute in jobs:

@@ -14,10 +14,9 @@ import asyncio
 import signal
 import sys
 
-import structlog
-from core.logging import configure_logging
+from observability.logging import get_logger
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__, component="voice")
 
 
 def _parse_args() -> argparse.Namespace:
@@ -67,9 +66,22 @@ def _parse_args() -> argparse.Namespace:
 
 
 async def _main_async(args: argparse.Namespace) -> None:
+    from career.expert import CareerExpert
+    from creative.expert import CreativeExpert
+    from goals.expert import GoalExpert
+    from intelligence.expert import IntelligenceExpert
+    from orchestrator.main import Orchestrator
+    from spiritual.expert import SpiritualExpert
+
     from voice.pipeline import VoicePipeline
 
+    orch = Orchestrator()
+    for expert in (SpiritualExpert(), CareerExpert(), IntelligenceExpert(), CreativeExpert(), GoalExpert()):
+        orch.register(expert)
+    await orch.start()
+
     pipeline = VoicePipeline(
+        orchestrator=orch,
         wake_model_path=args.wake_model,
         tts_voice=args.tts_voice,
         whisper_model=args.whisper,
@@ -104,12 +116,17 @@ async def _main_async(args: argparse.Namespace) -> None:
             pass  # Windows doesn't support add_signal_handler for all signals
 
     use_wake = not args.no_wake
-    await pipeline.run_forever(use_wake_word=use_wake)
+    try:
+        await pipeline.run_forever(use_wake_word=use_wake)
+    finally:
+        await orch.stop()
 
 
 def main() -> None:
+    from observability.logging import setup_logging
+
     args = _parse_args()
-    configure_logging(json=args.log_json, level="INFO")
+    setup_logging(debug=False)
     asyncio.run(_main_async(args))
 
 

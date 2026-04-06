@@ -16,6 +16,7 @@ class Intent(StrEnum):
     CAREER = "CAREER"
     INTELLIGENCE = "INTELLIGENCE"
     CREATIVE = "CREATIVE"
+    GOALS = "GOALS"
     GENERAL = "GENERAL"
 
 
@@ -26,6 +27,7 @@ class ExpertName(StrEnum):
     CAREER = "career"
     INTELLIGENCE = "intelligence"
     CREATIVE = "creative"
+    GOALS = "goals"
     GENERAL = "general"
     ORCHESTRATOR = "orchestrator"
 

@@ -59,6 +59,24 @@ class Settings(BaseSettings):
     # e.g. "bible-ai:rag,orpo,fine-tuning,graphrag; sovereign-edge:langgraph,agents,mcp; gpu-suite:inference,tensorrt,vllm"  # noqa: E501
     repo_topics: str = "bible-ai:rag,orpo,fine-tuning,graphrag,retrieval; sovereign-edge:langgraph,agents,mcp,tool-use; gpu-suite:inference,tensorrt,vllm,exllamav2,quantization,benchmark,cuda"  # noqa: E501
 
+    # Goals Agent
+    goals_enabled: bool = True
+    goals_db_path: Path | None = None  # defaults to ssd_root/goals.db
+
+    # Web Dashboard (served on the health port)
+    dashboard_token: SecretStr = SecretStr("")  # set SE_DASHBOARD_TOKEN to enable
+
+    # WhatsApp via Twilio
+    whatsapp_enabled: bool = False
+    twilio_account_sid: SecretStr = SecretStr("")
+    twilio_auth_token: SecretStr = SecretStr("")
+    twilio_whatsapp_from: str = ""   # e.g. "whatsapp:+14155238886"
+    whatsapp_owner_number: str = ""  # e.g. "whatsapp:+12125551234"
+
+    # MCP Tool Server
+    mcp_enabled: bool = False
+    mcp_port: int = 3000
+
     # Feature Flags
     voice_enabled: bool = False
     creative_enabled: bool = True

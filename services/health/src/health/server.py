@@ -18,17 +18,26 @@ from pathlib import Path
 import uvicorn
 from core.config import get_settings
 from fastapi import FastAPI, Response, status
+from fastapi.staticfiles import StaticFiles
+
+from health.dashboard import router as dashboard_router
 
 logger = logging.getLogger(__name__)
 
 _START_TIME: float = time.monotonic()
+_STATIC_DIR = Path(__file__).parent.parent.parent / "static"
 
 app = FastAPI(
     title="Sovereign Edge Health",
-    version="0.1.0",
+    version="0.2.0",
     docs_url=None,  # disable Swagger in production
     redoc_url=None,
 )
+
+# Mount static assets and dashboard routes
+if _STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+app.include_router(dashboard_router)
 
 
 @app.get("/health")

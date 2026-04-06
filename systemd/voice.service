@@ -1,0 +1,50 @@
+[Unit]
+Description=Sovereign Edge Voice Assistant
+Documentation=https://github.com/omnipotence-eth/sovereign-edge
+After=sovereign-edge-telegram.service
+Wants=network-online.target
+PartOf=ai-stack.target
+# Skip this service on headless VPS/CI where no mic hardware exists
+AssertPathExists=/dev/snd
+
+# ── Deployment Variables ───────────────────────────────────────────────────────
+# Before enabling this service, set these to match your environment:
+#   DEPLOY_USER  — the Linux user that owns the repo
+#   DEPLOY_ROOT  — absolute path to the sovereign-edge repo root
+#
+# Quick setup (run as root):
+#   sed -i 's|<DEPLOY_USER>|YOUR_USER|g; s|<DEPLOY_ROOT>|/home/YOUR_USER/sovereign-edge|g' \
+#       /etc/systemd/system/voice.service
+#   systemctl daemon-reload
+
+[Service]
+Type=simple
+User=<DEPLOY_USER>
+WorkingDirectory=<DEPLOY_ROOT>
+Environment=SOPS_AGE_KEY_FILE=<DEPLOY_ROOT>/../.config/sops/age/keys.txt
+EnvironmentFile=-<DEPLOY_ROOT>/secrets/.env.decrypted
+
+ExecStart=<DEPLOY_ROOT>/.venv/bin/python -m voice
+ExecStop=/bin/kill -TERM $MAINPID
+
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=15
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sovereign-edge-voice
+
+# Resource limits
+MemoryMax=1G
+CPUQuota=40%
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=<DEPLOY_ROOT>
+# ALSA mic access on Jetson Orin
+SupplementaryGroups=audio
+
+[Install]
+WantedBy=ai-stack.target

@@ -364,12 +364,13 @@ async def _run() -> None:
 
     from career.expert import CareerExpert
     from creative.expert import CreativeExpert
+    from goals.expert import GoalExpert
     from intelligence.expert import IntelligenceExpert
     from orchestrator.main import Orchestrator
     from spiritual.expert import SpiritualExpert
 
     orch = Orchestrator()
-    for expert in (SpiritualExpert(), CareerExpert(), IntelligenceExpert(), CreativeExpert()):
+    for expert in (SpiritualExpert(), CareerExpert(), IntelligenceExpert(), CreativeExpert(), GoalExpert()):  # noqa: E501
         orch.register(expert)
 
     bot = SovereignEdgeDiscordBot(orch)

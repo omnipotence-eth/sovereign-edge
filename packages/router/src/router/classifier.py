@@ -90,6 +90,17 @@ _KEYWORD_MAP: dict[str, Intent] = {
     "training": Intent.INTELLIGENCE,
     "dataset": Intent.INTELLIGENCE,
     "huggingface": Intent.INTELLIGENCE,
+    # Goals
+    "add goal": Intent.GOALS,
+    "my goals": Intent.GOALS,
+    "list goals": Intent.GOALS,
+    "show goals": Intent.GOALS,
+    "goal": Intent.GOALS,
+    "habit": Intent.GOALS,
+    "objective": Intent.GOALS,
+    "milestone": Intent.GOALS,
+    "progress": Intent.GOALS,
+    "complete goal": Intent.GOALS,
     # Creative
     "video": Intent.CREATIVE,
     "content": Intent.CREATIVE,
@@ -146,6 +157,14 @@ _INTENT_PROTOTYPES: dict[Intent, list[str]] = {
         "Write a YouTube script about machine learning",
         "Create a Twitter thread about LLM trends",
         "Draft a blog post about my experience with fine-tuning",
+    ],
+    Intent.GOALS: [
+        "Add a goal to land an ML engineer job by June",
+        "Show me my active goals and progress",
+        "Update goal #1 to 75% complete",
+        "Mark goal #2 as done",
+        "What are my current objectives?",
+        "I want to track a new habit",
     ],
     Intent.GENERAL: [
         "What time is it?",
