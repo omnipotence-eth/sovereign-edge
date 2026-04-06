@@ -265,7 +265,7 @@ def _get_flashrank() -> Any:  # noqa: ANN401
             from flashrank import Ranker
 
             _flashrank_ranker = Ranker(
-                model_name="ms-marco-MiniLM-L-4-v2",
+                model_name="ms-marco-TinyBERT-L-2-v2",
                 cache_dir=str(Path(tempfile.gettempdir()) / "flashrank"),
             )
             logger.info("intel_flashrank_loaded")
