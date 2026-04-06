@@ -27,8 +27,20 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from core.types import ExpertName, TaskPriority, TaskRequest
+from core.types import ExpertName, Intent, RoutingDecision, TaskPriority, TaskRequest
 from mcp.server.fastmcp import FastMCP
+
+_EXPERT_TO_INTENT: dict[ExpertName, Intent] = {
+    ExpertName.SPIRITUAL: Intent.SPIRITUAL,
+    ExpertName.CAREER: Intent.CAREER,
+    ExpertName.INTELLIGENCE: Intent.INTELLIGENCE,
+    ExpertName.CREATIVE: Intent.CREATIVE,
+    ExpertName.GOALS: Intent.GOALS,
+    ExpertName.GENERAL: Intent.GENERAL,
+}
+
+# Only experts that have a dispatch target — ORCHESTRATOR is not routable here.
+_VALID_EXPERTS = {e.value for e in _EXPERT_TO_INTENT}
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +49,6 @@ mcp = FastMCP("sovereign-edge")
 # ── Lazy orchestrator ──────────────────────────────────────────────────────────
 
 _orchestrator: Any = None
-_VALID_EXPERTS = {e.value for e in ExpertName}
 
 
 def _get_orchestrator() -> object:
@@ -73,7 +84,7 @@ async def ask_expert(expert: str, query: str) -> str:
     Parameters
     ----------
     expert:
-        One of: spiritual, career, intelligence, creative, goals
+        One of: spiritual, career, intelligence, creative, goals, general
     query:
         The question or task to send to the expert.
     """
@@ -82,17 +93,15 @@ async def ask_expert(expert: str, query: str) -> str:
         return f"Unknown expert '{expert}'. Valid options: {valid}"
 
     try:
-        from router.classifier import IntentRouter
-
         orch = _get_orchestrator()
-        router = IntentRouter()
-        intent, _confidence, routing = await router.aroute(query)
+        # Route to the explicitly requested expert — do not re-classify by content.
+        intent = _EXPERT_TO_INTENT[ExpertName(expert)]
 
         request = TaskRequest(
             content=query,
             intent=intent,
             priority=TaskPriority.HIGH,
-            routing=routing,
+            routing=RoutingDecision.CLOUD,
             context={"chat_id": "mcp"},
         )
 
@@ -116,9 +125,9 @@ async def get_memory(query: str) -> str:
         Search term to filter memory entries (case-insensitive substring match).
     """
     try:
-        from memory.episodic import EpisodicMemory
+        from memory.episodic import get_episodic_memory
 
-        entries = EpisodicMemory().get_all()
+        entries = get_episodic_memory().get_all()
         if not entries:
             return "No episodic memory entries found."
 

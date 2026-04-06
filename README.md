@@ -1,6 +1,6 @@
 # Sovereign Edge
 
-[![Version](https://img.shields.io/badge/version-0.2.0-blue)](pyproject.toml)
+[![Version](https://img.shields.io/badge/version-0.3.1-blue)](pyproject.toml)
 [![Python](https://img.shields.io/badge/python-3.11+-green)](pyproject.toml)
 
 A personal AI intelligence system — privacy-first, edge-deployed, and grounded in live data.
@@ -17,6 +17,7 @@ Sovereign Edge runs four specialized AI agents on a Jetson Orin or any Linux ARM
 | **Career** | Job search, resume coaching, interview prep | Jina web search |
 | **Creative** | Writing, content strategy, social media | Jina web search |
 | **Spiritual** | Scripture study, prayer, devotionals | bible-api.com (KJV) |
+| **Goals** | Personal goal tracking, daily check-ins | SQLite goal store |
 
 ---
 
@@ -31,6 +32,7 @@ Delivered automatically each day (times relative to `SE_MORNING_WAKE_HOUR`, defa
 | 05:30 | AI/ML intelligence digest (arXiv + HuggingFace) |
 | 06:00 | Career brief — job market scan |
 | 07:00 | Creative direction — daily content prompt |
+| 07:30 | Goals check-in — top 3 urgent goals with action item |
 | 18:00 | Evening career rescan |
 
 ---
@@ -38,7 +40,7 @@ Delivered automatically each day (times relative to `SE_MORNING_WAKE_HOUR`, defa
 ## Architecture
 
 ```
-Telegram / Discord (owner-only)
+Telegram / Discord / WhatsApp (owner-only)
         │
         ▼
   ┌─────────────────────────────────────────┐
@@ -50,18 +52,18 @@ Telegram / Discord (owner-only)
   └──────────────┬──────────────────────────┘
                  │
         ┌────────▼────────┐
-        │   Orchestrator  │  ← APScheduler (morning pipeline)
+        │   Orchestrator  │  ← APScheduler (7-job morning pipeline)
         │   + TraceStore  │  ← SQLite (cost, latency, tokens)
         └────────┬────────┘
                  │
-    ┌────────────┼────────────┬─────────────┐
-    ▼            ▼            ▼             ▼
- Spiritual    Career    Intelligence    Creative
-  Expert        Expert       Expert          Expert
-    │            │            │             │
-    ▼            ▼            ▼             ▼
-Bible API    Jina Search   arXiv +       Jina Search
-  (KJV)                   HF Papers
+  ┌──────────────┼──────────┬──────────┬──────────┐
+  ▼              ▼          ▼          ▼          ▼
+Spiritual    Career    Intelligence  Creative   Goals
+ Expert       Expert      Expert      Expert   Expert
+   │            │            │          │         │
+   ▼            ▼            ▼          ▼         ▼
+Bible API  Jina Search  arXiv +    Jina Search  SQLite
+  (KJV)               HF Papers               goal store
                  │
         ┌────────▼────────────────────────────┐
         │           LLM Gateway               │
@@ -74,6 +76,12 @@ Bible API    Jina Search   arXiv +       Jina Search
         │  Conversation history (SQLite)      │
         │  Semantic cache (LanceDB)           │
         │  Episodic memory (Mem0 / optional)  │
+        └─────────────────────────────────────┘
+                 │
+        ┌────────▼────────────────────────────┐
+        │           Services                  │
+        │  Health dashboard (FastAPI + HTMX)  │
+        │  MCP tool server (Claude Desktop)   │
         └─────────────────────────────────────┘
 ```
 

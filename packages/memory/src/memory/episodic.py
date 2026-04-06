@@ -82,7 +82,7 @@ class EpisodicMemory:
         """
         if not self._available or not self._memory:
             return
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             await loop.run_in_executor(
                 None,
@@ -108,7 +108,7 @@ class EpisodicMemory:
         """Non-blocking search — runs Mem0's sync embedding + retrieval in executor."""
         if not self._available or not self._memory:
             return []
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             results = await loop.run_in_executor(
                 None,

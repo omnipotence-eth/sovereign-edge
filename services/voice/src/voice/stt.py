@@ -20,9 +20,9 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-import structlog
+from observability.logging import get_logger
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__, component="voice")
 
 _SAMPLE_RATE = 16_000
 

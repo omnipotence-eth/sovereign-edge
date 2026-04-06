@@ -89,19 +89,46 @@ class GoalStore:
 
     # ── Write operations ──────────────────────────────────────────────────────
 
+    @staticmethod
+    def _validate_date(target_date: str | None) -> str | None:
+        """Validate and normalise target_date to ISO date format (YYYY-MM-DD).
+
+        Raises ValueError for non-empty strings that are not parseable as dates.
+        Returns None for None input.
+        """
+        if target_date is None:
+            return None
+        stripped = target_date.strip()
+        if not stripped:
+            return None
+        # Accept YYYY-MM-DD or full ISO datetime; normalise to date only
+        try:
+            parsed = datetime.fromisoformat(stripped)
+            return parsed.date().isoformat()
+        except ValueError as exc:
+            msg = f"target_date must be ISO format (YYYY-MM-DD), got: {stripped!r}"
+            raise ValueError(msg) from exc
+
     def add_goal(
         self,
         title: str,
         description: str = "",
         target_date: str | None = None,
     ) -> int:
-        """Insert a new active goal. Returns the new goal id."""
+        """Insert a new active goal. Returns the new goal id.
+
+        Raises ValueError if title is empty or target_date is malformed.
+        """
+        title = title.strip()
+        if not title:
+            raise ValueError("goal title must not be empty")
+        validated_date = self._validate_date(target_date)
         now = datetime.now(UTC).isoformat()
         with self._lock, self._connect() as conn:
             cur = conn.execute(
                 "INSERT INTO goals (title, description, target_date, created_at, updated_at)"
                 " VALUES (?, ?, ?, ?, ?)",
-                (title.strip(), description.strip(), target_date, now, now),
+                (title, description.strip(), validated_date, now, now),
             )
             goal_id = cur.lastrowid
         logger.info("goal_added id=%d title=%r", goal_id, title)

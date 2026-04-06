@@ -106,29 +106,41 @@ def test_fetch_transcript_sync_no_httpx() -> None:
 
 
 def test_fetch_transcript_sync_success() -> None:
-    mock_httpx = MagicMock()
     mock_resp = MagicMock()
     mock_resp.json.return_value = [{"content": "Good morning, this is the Q4 call..."}]
-    mock_httpx.get.return_value = mock_resp
+
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=None)
+    mock_client.get.return_value = mock_resp
+
+    mock_httpx = MagicMock()
+    mock_httpx.Client.return_value = mock_client
 
     with patch.dict("sys.modules", {"httpx": mock_httpx}):
         result = _fetch_transcript_sync("NVDA", "real_key")
 
     assert result == "Good morning, this is the Q4 call..."
-    mock_httpx.get.assert_called_once()
+    mock_client.get.assert_called_once()
 
 
 def test_fetch_transcript_sync_empty_response_walks_back() -> None:
-    mock_httpx = MagicMock()
     mock_resp = MagicMock()
     mock_resp.json.return_value = []  # No transcript for any quarter
-    mock_httpx.get.return_value = mock_resp
+
+    mock_client = MagicMock()
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=None)
+    mock_client.get.return_value = mock_resp
+
+    mock_httpx = MagicMock()
+    mock_httpx.Client.return_value = mock_client
 
     with patch.dict("sys.modules", {"httpx": mock_httpx}):
         result = _fetch_transcript_sync("AAPL", "real_key")
 
     assert result == ""
-    assert mock_httpx.get.call_count == 4  # tried all 4 quarters
+    assert mock_client.get.call_count == 4  # tried all 4 quarters
 
 
 # ── get_transcript_summary ────────────────────────────────────────────────────
@@ -151,7 +163,13 @@ async def test_get_transcript_summary_no_transcript() -> None:
 
 async def test_get_transcript_summary_with_transcript() -> None:
     llm = AsyncMock()
-    llm.complete.return_value = "• Revenue beat\n• AI growth strong\n• Raised guidance"
+    llm.complete.return_value = {
+        "content": "• Revenue beat\n• AI growth strong\n• Raised guidance",
+        "model": "test",
+        "tokens_in": 10,
+        "tokens_out": 30,
+        "cost_usd": 0.001,
+    }
     with patch("intelligence.earnings._fetch_transcript_sync", return_value="Q4 transcript text"):
         result = await get_transcript_summary("NVDA", fmp_api_key="key123", llm=llm)
     assert "Revenue beat" in result
@@ -179,7 +197,13 @@ async def test_enrich_quotes_with_fmp_key_calls_llm() -> None:
     quote = Quote(symbol="NVDA", price=900.0, change_pct=2.5, volume=5_000_000, timestamp="")
     ctx = EarningsContext(symbol="NVDA", eps_surprise_pct=12.0)
     llm = AsyncMock()
-    llm.complete.return_value = "• Beat by 12%\n• Data center boom\n• Raised FY guidance"
+    llm.complete.return_value = {
+        "content": "• Beat by 12%\n• Data center boom\n• Raised FY guidance",
+        "model": "test",
+        "tokens_in": 10,
+        "tokens_out": 30,
+        "cost_usd": 0.001,
+    }
 
     settings = MagicMock()
     settings.fmp_api_key = "secret"

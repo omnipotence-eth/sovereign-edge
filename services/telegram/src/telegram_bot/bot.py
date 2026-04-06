@@ -404,7 +404,7 @@ class SovereignEdgeBot:
         )
 
         await update.message.reply_text(
-            f"📄 Processing _{doc.file_name}_ → *{intent.value.lower()}* expert…",
+            f"📄 Processing <i>{doc.file_name}</i> → <b>{intent.value.lower()}</b> expert…",
             parse_mode="HTML",
         )
 
@@ -501,16 +501,6 @@ def _extract_file_text(path: object, fname: str) -> str:
 
     logger.info("unsupported_file_type ext=%s fname=%s", ext, fname)
     return ""
-
-
-async def _keep_typing(bot: Any, chat_id: int, stop: asyncio.Event) -> None:  # noqa: ANN401
-    """Refresh the typing indicator every 4 s until *stop* is set."""
-    while not stop.is_set():
-        try:
-            await bot.send_chat_action(chat_id=chat_id, action="typing")
-        except Exception:
-            logger.debug("typing_action_failed", exc_info=True)
-        await asyncio.sleep(4)
 
 
 def _sanitize_markdown(text: str) -> str:

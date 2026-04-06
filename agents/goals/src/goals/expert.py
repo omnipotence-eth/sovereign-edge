@@ -58,7 +58,12 @@ class GoalExpert(BaseExpert):
             "tokens_out": 0,
             "cost_usd": 0.0,
         }
-        result = await goals_subgraph.ainvoke(initial)
+        try:
+            result = await goals_subgraph.ainvoke(initial)
+        except Exception:
+            logger.warning("goals_subgraph_invoke_failed — falling back to direct", exc_info=True)
+            return await self._process_direct(task, t0)
+
         return TaskResult(
             task_id=task.task_id,
             expert=ExpertName.GOALS,
@@ -74,12 +79,22 @@ class GoalExpert(BaseExpert):
 
     async def _process_direct(self, task: TaskRequest, t0: float) -> TaskResult:
         """Fallback: single LLM call when LangGraph is unavailable."""
+        import json
+
         from llm.gateway import get_gateway
 
         gateway = get_gateway()
-        result = await gateway.complete(
+        history: list[dict[str, str]] = []
+        if history_json := task.context.get("history"):
+            try:
+                history = json.loads(history_json)
+            except (ValueError, TypeError):
+                pass
+
+        content = await gateway.complete(
             messages=[
                 {"role": "system", "content": _MORNING_SYSTEM},
+                *history,
                 {"role": "user", "content": task.content},
             ],
             max_tokens=300,
@@ -89,12 +104,12 @@ class GoalExpert(BaseExpert):
         return TaskResult(
             task_id=task.task_id,
             expert=ExpertName.GOALS,
-            content=result["content"],
-            model_used=result.get("model", ""),
-            tokens_in=result.get("tokens_in", 0),
-            tokens_out=result.get("tokens_out", 0),
+            content=content,
+            model_used="",
+            tokens_in=0,
+            tokens_out=0,
             latency_ms=(time.monotonic() - t0) * 1000,
-            cost_usd=result.get("cost_usd", 0.0),
+            cost_usd=0.0,
             routing=task.routing,
         )
 
@@ -117,7 +132,7 @@ class GoalExpert(BaseExpert):
 
             gateway = get_gateway()
             goal_summary = "\n".join(lines[1:])
-            result = await gateway.complete(
+            action = await gateway.complete(
                 messages=[
                     {"role": "system", "content": _MORNING_SYSTEM},
                     {
@@ -133,7 +148,7 @@ class GoalExpert(BaseExpert):
                 routing=RoutingDecision.CLOUD,
                 expert=self.name,
             )
-            lines.append(f"\n*Action:* {result['content'].strip()}")
+            lines.append(f"\n*Action:* {action.strip()}")
         except Exception:
             logger.warning("goals_morning_brief_llm_failed", exc_info=True)
 

@@ -122,13 +122,18 @@ async def _send_whatsapp(to: str, body: str) -> None:
         logger.warning("whatsapp_send_skipped — Twilio credentials not configured")
         return
 
+    # Normalize: strip any existing whatsapp: prefix before re-adding so the
+    # setting can store either "+1..." or "whatsapp:+1..." without double-prefixing.
+    from_bare = from_number.removeprefix("whatsapp:")
+    to_bare = to.removeprefix("whatsapp:")
+
     def _sync_send(chunk: str) -> None:
         from twilio.rest import Client
 
         client = Client(account_sid, auth_token)
         client.messages.create(
-            from_=f"whatsapp:{from_number}",
-            to=f"whatsapp:{to}",
+            from_=f"whatsapp:{from_bare}",
+            to=f"whatsapp:{to_bare}",
             body=chunk,
         )
 
@@ -165,6 +170,19 @@ async def webhook(
 ) -> dict[str, str]:
     """Receive and process inbound WhatsApp messages."""
     settings = get_settings()
+
+    # ── 0. Content-Type guard ────────────────────────────────────────────────
+    content_type = request.headers.get("content-type", "")
+    _is_form = (
+        "application/x-www-form-urlencoded" in content_type
+        or "multipart/form-data" in content_type
+    )
+    if not _is_form:
+        logger.warning("whatsapp_bad_content_type content_type=%r", content_type)
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Expected application/x-www-form-urlencoded",
+        )
 
     # ── 1. Signature validation ──────────────────────────────────────────────
     form_data = await request.form()
@@ -207,11 +225,8 @@ async def webhook(
 
     # ── 4. Dispatch through orchestrator ────────────────────────────────────
     try:
-        from router.classifier import IntentRouter
-
         orch = _get_orchestrator()
-        router = IntentRouter()
-        intent, _confidence, routing = await router.aroute(text)
+        intent, _confidence, routing = await _router.aroute(text)
         task = TaskRequest(
             content=text,
             intent=intent,

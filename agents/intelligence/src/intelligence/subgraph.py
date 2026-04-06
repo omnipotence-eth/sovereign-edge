@@ -259,17 +259,21 @@ def _get_flashrank() -> Any:  # noqa: ANN401
     global _flashrank_ranker
     if _flashrank_ranker is None:
         try:
+            import tempfile
+            from pathlib import Path
+
             from flashrank import Ranker
 
             _flashrank_ranker = Ranker(
-                model_name="ms-marco-MiniLM-L-4-v2", cache_dir="/tmp/flashrank"  # noqa: S108
+                model_name="ms-marco-MiniLM-L-4-v2",
+                cache_dir=str(Path(tempfile.gettempdir()) / "flashrank"),
             )
             logger.info("intel_flashrank_loaded")
         except ImportError:
             _flashrank_ranker = False
             logger.debug("intel_flashrank_unavailable — using keyword fallback")
         except Exception:
-            # Catches model download failures, ONNX runtime errors, /tmp permission issues
+            # Catches model download failures, ONNX runtime errors, temp-dir permission issues
             _flashrank_ranker = False
             logger.warning("intel_flashrank_init_failed — using keyword fallback", exc_info=True)
     return _flashrank_ranker if _flashrank_ranker else None
@@ -457,7 +461,7 @@ async def _synthesizer(state: IntelligenceState) -> dict[str, Any]:
         expert="intelligence",
     )
 
-    brief = BriefOutput(content=result["content"])
+    brief = BriefOutput(content=result)
     if not brief.is_valid:
         logger.warning(
             "intel_brief_quality_low links=%d words=%d",
@@ -466,11 +470,11 @@ async def _synthesizer(state: IntelligenceState) -> dict[str, Any]:
         )
 
     return {
-        "response": result["content"],
-        "model_used": result.get("model", ""),
-        "tokens_in": result.get("tokens_in", 0),
-        "tokens_out": result.get("tokens_out", 0),
-        "cost_usd": result.get("cost_usd", 0.0),
+        "response": result,
+        "model_used": "",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "cost_usd": 0.0,
     }
 
 

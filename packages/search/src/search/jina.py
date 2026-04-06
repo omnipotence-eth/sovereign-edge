@@ -35,6 +35,7 @@ _RETRY_BASE_DELAY = 1.0
 # TTL cache for search results — protects free-tier quota
 # key → (result_text, monotonic_expiry)
 _CACHE_TTL = 1800.0  # 30 minutes
+_MAX_CACHE_SIZE = 500  # cap memory usage; LRU eviction when exceeded
 _search_cache: dict[str, tuple[str, float]] = {}
 
 
@@ -75,11 +76,14 @@ def _cache_get(key: str) -> str | None:
 
 def _cache_set(key: str, value: str) -> None:
     _search_cache[key] = (value, time.monotonic() + _CACHE_TTL)
-    # Evict expired entries on every 50th write to prevent unbounded dict growth.
-    # Without this, unique daily queries accumulate since _cache_get only
-    # evicts on read — entries never queried again stay forever.
+    # Evict expired entries on every 50th write to prevent unbounded growth.
     if len(_search_cache) % 50 == 0:
         _evict_expired()
+    # Hard cap: drop oldest entry if still over limit after TTL eviction
+    if len(_search_cache) > _MAX_CACHE_SIZE:
+        oldest_key = min(_search_cache, key=lambda k: _search_cache[k][1])
+        del _search_cache[oldest_key]
+        logger.debug("jina_cache_max_size_eviction remaining=%d", len(_search_cache))
 
 
 def _evict_expired() -> None:
@@ -103,23 +107,30 @@ _PRIVATE_NETS = [
 ]
 
 
+_DNS_TIMEOUT = 5.0  # seconds — prevents hung thread on slow/malicious DNS
+
+
 async def _is_private_url(url: str) -> bool:
     """Return True if the URL resolves to a private/loopback address.
 
     DNS resolution runs in a thread-pool executor so the async event loop
-    is never blocked by a slow or hanging DNS query.
+    is never blocked by a slow or hanging DNS query. A 5-second timeout
+    prevents indefinite hangs from unresponsive resolvers.
     """
     try:
         parsed = urlparse(url)
         hostname = parsed.hostname or ""
         if not hostname:
             return True
-        loop = asyncio.get_event_loop()
-        resolved = await loop.run_in_executor(None, socket.gethostbyname, hostname)
+        loop = asyncio.get_running_loop()
+        resolved = await asyncio.wait_for(
+            loop.run_in_executor(None, socket.gethostbyname, hostname),
+            timeout=_DNS_TIMEOUT,
+        )
         addr = ipaddress.ip_address(resolved)
         return any(addr in net for net in _PRIVATE_NETS)
     except Exception:
-        return True  # Fail closed on any resolution error
+        return True  # Fail closed on any resolution error or timeout
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────

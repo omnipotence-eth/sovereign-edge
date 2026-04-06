@@ -117,6 +117,46 @@ Paper briefs are delivered as a guaranteed numbered list via instructor + Pydant
 
 ---
 
+## Goals
+
+| Variable | Default | Description |
+|---|---|---|
+| `SE_GOALS_ENABLED` | `true` | Enable the goals expert and 07:30 morning brief |
+| `SE_GOALS_DB_PATH` | `data/goals.db` | SQLite database path for goal storage |
+
+---
+
+## WhatsApp (Optional)
+
+Requires a Twilio account and a public HTTPS endpoint (ngrok for development).
+
+| Variable | Description |
+|---|---|
+| `SE_WHATSAPP_ENABLED` | Set `true` to enable the WhatsApp service |
+| `SE_TWILIO_ACCOUNT_SID` | Twilio Account SID from console.twilio.com |
+| `SE_TWILIO_AUTH_TOKEN` | Twilio Auth Token — used to validate webhook signatures |
+| `SE_TWILIO_WHATSAPP_FROM` | Your Twilio WhatsApp sender number (e.g. `+14155238886`). No `whatsapp:` prefix needed — the service adds it. |
+| `SE_WHATSAPP_OWNER_NUMBER` | Your personal WhatsApp number in E.164 format (e.g. `+12145550100`) |
+
+---
+
+## Web Dashboard (Optional)
+
+| Variable | Default | Description |
+|---|---|---|
+| `SE_DASHBOARD_TOKEN` | *(empty)* | Bearer token for the `/api/v1/*` dashboard endpoints. Dashboard is read-only when set; returns 503 if unset. |
+
+---
+
+## MCP Server (Optional)
+
+| Variable | Default | Description |
+|---|---|---|
+| `SE_MCP_ENABLED` | `false` | Enable the MCP tool server |
+| `SE_MCP_PORT` | `3000` | Port for SSE transport (Claude Code daemon mode) |
+
+---
+
 ## Feature Flags
 
 | Variable | Default | Description |

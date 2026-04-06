@@ -33,7 +33,6 @@ Usage:
 from __future__ import annotations
 
 import json
-import logging
 import re
 from typing import (
     Any,
@@ -43,6 +42,7 @@ from typing import (
 from core.expert import BaseExpert
 from core.types import ExpertName, Intent, RoutingDecision, TaskRequest, TaskResult
 from llm.gateway import get_gateway
+from observability.logging import get_logger
 from pydantic import BaseModel, ValidationError, field_validator
 
 try:
@@ -54,7 +54,7 @@ except ImportError:
     StateGraph = None  # type: ignore[assignment,misc]
     END = None  # type: ignore[assignment]
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__, component="director")
 
 # ── Expert names the director can route to ─────────────────────────────────────
 _ROUTABLE_EXPERTS: list[str] = [
@@ -62,6 +62,7 @@ _ROUTABLE_EXPERTS: list[str] = [
     ExpertName.CAREER,
     ExpertName.INTELLIGENCE,
     ExpertName.CREATIVE,
+    ExpertName.GOALS,
 ]
 
 _DIRECTOR_SYSTEM = """\
@@ -73,6 +74,7 @@ Available experts:
   career       — job search, resume, interviews, salary, LinkedIn
   intelligence — AI/ML research, arXiv papers, tech news, trends
   creative     — content writing, social media posts, scripts, blogs
+  goals        — goal tracking, progress updates, accountability, milestones
 
 RULES:
 1. Return a JSON object ONLY — no prose, no markdown fences.
@@ -195,7 +197,7 @@ class DirectorGraph:
                 routing=RoutingDecision.CLOUD,
                 expert="director",
             )
-            plan_json = _extract_json(result["content"])
+            plan_json = _extract_json(result)
             try:
                 plan = DirectorPlan.model_validate(plan_json)
                 experts = plan.experts
@@ -246,12 +248,10 @@ class DirectorGraph:
         subgraph = _get_expert_subgraph(expert_name)
         if subgraph is not None:
             try:
-                import json as _json
-
                 history: list[dict[str, str]] = []
                 if history_json := request.context.get("history"):
                     try:
-                        history = _json.loads(history_json)
+                        history = json.loads(history_json)
                     except (ValueError, TypeError):
                         pass
 
@@ -311,7 +311,7 @@ class DirectorGraph:
                 routing=state["request"].routing,
                 expert="director-merge",
             )
-            return {"final_output": merged["content"]}
+            return {"final_output": merged}
         except Exception:
             logger.warning("director_merge_failed — concatenating outputs", exc_info=True)
             return {"final_output": "\n\n---\n\n".join(results)}
@@ -397,6 +397,7 @@ def _intent_to_expert(intent: Intent) -> str:
         Intent.CAREER: ExpertName.CAREER,
         Intent.INTELLIGENCE: ExpertName.INTELLIGENCE,
         Intent.CREATIVE: ExpertName.CREATIVE,
+        Intent.GOALS: ExpertName.GOALS,
     }.get(intent, ExpertName.INTELLIGENCE)
 
 

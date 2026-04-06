@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from pathlib import Path
 
 import uvicorn
 from core.config import get_settings
-from fastapi import FastAPI, Response, status
+from fastapi import FastAPI, Request, Response, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from health.dashboard import router as dashboard_router
@@ -33,6 +36,25 @@ app = FastAPI(
     docs_url=None,  # disable Swagger in production
     redoc_url=None,
 )
+
+# CORS — allow browser requests only from localhost (dashboard is container-internal)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8080", "http://127.0.0.1:8080"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
+    allow_credentials=False,
+)
+
+
+@app.middleware("http")
+async def _add_request_id(request: Request, call_next: object) -> JSONResponse:
+    """Attach a correlation ID to every request and response."""
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    response = await call_next(request)  # type: ignore[operator]
+    response.headers["X-Request-ID"] = request_id
+    return response  # type: ignore[return-value]
+
 
 # Mount static assets and dashboard routes
 if _STATIC_DIR.exists():

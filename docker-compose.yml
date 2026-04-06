@@ -76,7 +76,7 @@ services:
   # Container Toolkit installed, uncomment the deploy block below.
   # ----------------------------------------------------------
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.6.5
     container_name: sovereign-edge-ollama
     restart: unless-stopped
     volumes:

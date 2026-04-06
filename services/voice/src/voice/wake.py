@@ -17,9 +17,9 @@ from __future__ import annotations
 import time
 
 import numpy as np
-import structlog
+from observability.logging import get_logger
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__, component="voice")
 
 _CHUNK_SIZE = 1280  # 80ms at 16kHz — OpenWakeWord expects 1280 samples
 _SAMPLE_RATE = 16_000

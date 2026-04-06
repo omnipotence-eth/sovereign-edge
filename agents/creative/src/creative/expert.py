@@ -9,6 +9,7 @@ Falls back to a direct gateway call when LangGraph is unavailable.
 
 from __future__ import annotations
 
+import json
 import time
 
 from core.expert import BaseExpert
@@ -39,7 +40,6 @@ class CreativeExpert(BaseExpert):
         return await self._process_direct(task, t0)
 
     async def _process_via_subgraph(self, task: TaskRequest, t0: float) -> TaskResult:
-        import json
 
         history: list[dict[str, str]] = []
         if history_json := task.context.get("history"):
@@ -48,20 +48,24 @@ class CreativeExpert(BaseExpert):
             except (ValueError, TypeError):
                 pass
 
-        result = await creative_subgraph.ainvoke(
-            {
-                "query": task.content,
-                "routing": task.routing,
-                "history": history,
-                "is_morning_brief": False,
-                "trend_context": "",
-                "response": "",
-                "model_used": "",
-                "tokens_in": 0,
-                "tokens_out": 0,
-                "cost_usd": 0.0,
-            }
-        )
+        try:
+            result = await creative_subgraph.ainvoke(
+                {
+                    "query": task.content,
+                    "routing": task.routing,
+                    "history": history,
+                    "is_morning_brief": False,
+                    "trend_context": "",
+                    "response": "",
+                    "model_used": "",
+                    "tokens_in": 0,
+                    "tokens_out": 0,
+                    "cost_usd": 0.0,
+                }
+            )
+        except Exception:
+            logger.warning("creative_subgraph_invoke_failed — falling back to direct", exc_info=True)
+            return await self._process_direct(task, t0)
 
         return TaskResult(
             task_id=task.task_id,
@@ -78,7 +82,6 @@ class CreativeExpert(BaseExpert):
 
     async def _process_direct(self, task: TaskRequest, t0: float) -> TaskResult:
         """Fallback: single LLM call when LangGraph is unavailable."""
-        import json
 
         from llm.gateway import get_gateway
         from search.jina import search as jina_search
@@ -113,7 +116,7 @@ class CreativeExpert(BaseExpert):
             },
         ]
 
-        result = await gateway.complete(
+        content = await gateway.complete(
             messages=messages,
             max_tokens=2048,
             routing=task.routing,
@@ -123,32 +126,35 @@ class CreativeExpert(BaseExpert):
         return TaskResult(
             task_id=task.task_id,
             expert=ExpertName.CREATIVE,
-            content=result["content"],
-            model_used=result["model"],
-            tokens_in=result["tokens_in"],
-            tokens_out=result["tokens_out"],
+            content=content,
+            model_used="",
+            tokens_in=0,
+            tokens_out=0,
             latency_ms=(time.monotonic() - t0) * 1000,
-            cost_usd=result["cost_usd"],
+            cost_usd=0.0,
             routing=task.routing,
         )
 
     async def morning_brief(self) -> str:
         if creative_subgraph is not None:
-            result = await creative_subgraph.ainvoke(
-                {
-                    "query": "",
-                    "routing": RoutingDecision.CLOUD,
-                    "history": [],
-                    "is_morning_brief": True,
-                    "trend_context": "",
-                    "response": "",
-                    "model_used": "",
-                    "tokens_in": 0,
-                    "tokens_out": 0,
-                    "cost_usd": 0.0,
-                }
-            )
-            return result["response"]
+            try:
+                result = await creative_subgraph.ainvoke(
+                    {
+                        "query": "",
+                        "routing": RoutingDecision.CLOUD,
+                        "history": [],
+                        "is_morning_brief": True,
+                        "trend_context": "",
+                        "response": "",
+                        "model_used": "",
+                        "tokens_in": 0,
+                        "tokens_out": 0,
+                        "cost_usd": 0.0,
+                    }
+                )
+                return result["response"]
+            except Exception:
+                logger.warning("creative_subgraph_morning_brief_failed — using direct", exc_info=True)
 
         # Fallback
         from llm.gateway import get_gateway
@@ -160,7 +166,7 @@ class CreativeExpert(BaseExpert):
             max_results=3,
         )
 
-        result = await gateway.complete(
+        return await gateway.complete(
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {
@@ -176,7 +182,6 @@ class CreativeExpert(BaseExpert):
             routing=RoutingDecision.CLOUD,
             expert=self.name,
         )
-        return result["content"]
 
     async def health_check(self) -> bool:
         try:
@@ -186,7 +191,7 @@ class CreativeExpert(BaseExpert):
                 messages=[{"role": "user", "content": "ping"}],
                 max_tokens=5,
             )
-            return bool(result.get("content"))
+            return bool(result)
         except Exception:
             logger.warning("creative_health_check_failed", exc_info=True)
             return False

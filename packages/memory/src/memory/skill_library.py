@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from pathlib import Path
 
-import structlog
+from observability.logging import get_logger
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__, component="memory")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS skills (
@@ -40,17 +41,20 @@ class SkillLibrary:
     Skill memory stores *how to do things well* — automatically reinforced
     by positive HITL outcomes and successful completions.
 
-    Backed by SQLite (stdlib, no extra deps).
+    Backed by WAL-mode SQLite (stdlib, no extra deps). Thread-safe.
     """
 
     def __init__(self, db_path: Path | None = None) -> None:
         self._db_path = db_path or Path("data/skills.db")
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
         self._conn: sqlite3.Connection | None = None
 
     def _get_conn(self) -> sqlite3.Connection:
         if self._conn is None:
             self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA synchronous=NORMAL")
             self._conn.executescript(_SCHEMA)
             self._conn.commit()
             self._seed_if_empty()
@@ -89,19 +93,20 @@ class SkillLibrary:
         - success=True when user approves a HITL action or non-HITL task completes
         - success=False when user rejects a HITL action
         """
-        conn = self._get_conn()
         delta = 0.1 if success else -0.05
-        conn.execute(
-            """UPDATE skills
-               SET score     = MAX(0.1, score + ?),
-                   use_count = use_count + 1
-               WHERE id = (
-                   SELECT id FROM skills WHERE intent = ?
-                   ORDER BY score DESC LIMIT 1
-               )""",
-            (delta, intent),
-        )
-        conn.commit()
+        with self._lock:
+            conn = self._get_conn()
+            conn.execute(
+                """UPDATE skills
+                   SET score     = MAX(0.1, score + ?),
+                       use_count = use_count + 1
+                   WHERE id = (
+                       SELECT id FROM skills WHERE intent = ?
+                       ORDER BY score DESC LIMIT 1
+                   )""",
+                (delta, intent),
+            )
+            conn.commit()
         logger.info(
             "memory.skill_outcome_recorded",
             intent=intent,
@@ -111,15 +116,17 @@ class SkillLibrary:
 
     def add_skill(self, intent: str, description: str) -> None:
         """Persist a newly learned skill pattern (score starts at 1.0)."""
-        conn = self._get_conn()
-        conn.execute(
-            "INSERT INTO skills (intent, description) VALUES (?, ?)",
-            (intent, description),
-        )
-        conn.commit()
+        with self._lock:
+            conn = self._get_conn()
+            conn.execute(
+                "INSERT INTO skills (intent, description) VALUES (?, ?)",
+                (intent, description),
+            )
+            conn.commit()
         logger.info("memory.skill_added", intent=intent)
 
     def close(self) -> None:
-        if self._conn is not None:
-            self._conn.close()
-            self._conn = None
+        with self._lock:
+            if self._conn is not None:
+                self._conn.close()
+                self._conn = None

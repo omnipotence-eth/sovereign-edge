@@ -63,6 +63,12 @@ class ConversationStore:
         expert: str = "",
     ) -> None:
         """Append a turn and prune if over MAX_STORED."""
+        if not chat_id or not chat_id.strip():
+            logger.warning("conversation_add_turn_skipped — empty chat_id")
+            return
+        if role not in ("user", "assistant", "system"):
+            logger.warning("conversation_add_turn_skipped — invalid role=%r", role)
+            return
         try:
             with self._lock:
                 self.conn.execute(
@@ -107,13 +113,25 @@ class ConversationStore:
         except sqlite3.Error:
             logger.error("conversation_clear_failed chat_id=%s", chat_id, exc_info=True)
 
+    def close(self) -> None:
+        """Close the underlying SQLite connection. Safe to call multiple times."""
+        with self._lock:
+            try:
+                self.conn.close()
+            except Exception:
+                logger.debug("conversation_store_close_failed", exc_info=True)
+
 
 _instance: ConversationStore | None = None
+_instance_lock = threading.Lock()
 
 
 def get_conversation_store() -> ConversationStore:
-    """Module-level singleton — preserves connection across calls."""
+    """Thread-safe module-level singleton — preserves connection across calls."""
     global _instance
     if _instance is None:
-        _instance = ConversationStore()
+        with _instance_lock:
+            # Double-checked locking: re-check under lock to prevent double init
+            if _instance is None:
+                _instance = ConversationStore()
     return _instance

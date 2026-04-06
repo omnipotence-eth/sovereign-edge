@@ -66,7 +66,7 @@ Reply (chunked at 4000 chars for Telegram, 2000 chars for Discord)
 
 The gateway (`packages/llm`) wraps LiteLLM as a library (not a proxy) and manages a priority-ordered provider chain. It exposes two completion methods:
 
-- `complete()` — standard text completion, returns `dict`
+- `complete()` — standard text completion, returns `str`. Falls back to local Ollama if all cloud providers fail or none are configured — never raises.
 - `complete_structured(response_model)` — instructor-wrapped completion, returns a validated Pydantic model. Used by career (`JobListingResponse`) and intelligence (`IntelBriefResponse`) to guarantee output format across all providers. Falls back to `None` on failure; callers then use `complete()`.
 
 
@@ -172,7 +172,7 @@ Long-term episodic memory via Mem0. Requires the `mem0ai` optional dependency. E
 
 ## Morning Pipeline
 
-The orchestrator uses APScheduler to fire six cron jobs per day. Times are relative to `SE_MORNING_WAKE_HOUR` in the `SE_TIMEZONE` timezone (default: 05:00 US/Central):
+The orchestrator uses APScheduler to fire seven cron jobs per day. Times are relative to `SE_MORNING_WAKE_HOUR` in the `SE_TIMEZONE` timezone (default: 05:00 US/Central):
 
 ```
 05:00  _morning_health_check    All experts pinged in parallel
@@ -180,6 +180,7 @@ The orchestrator uses APScheduler to fire six cron jobs per day. Times are relat
 05:30  _intelligence_brief      arXiv + HuggingFace papers → digest
 06:00  _career_brief            Job market search → actionable brief
 07:00  _creative_brief          Trend context → daily creative prompt
+07:30  _goals_brief             Top 3 urgent goals + action item
 18:00  _career_rescan_brief     Evening job scan
 ```
 

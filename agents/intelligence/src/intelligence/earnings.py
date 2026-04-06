@@ -14,13 +14,15 @@ import asyncio
 import math
 from dataclasses import dataclass, field
 
-import structlog
 from core.config import Settings
-from llm.gateway import LLMGateway, Message
+from llm.gateway import LLMGateway
+from observability.logging import get_logger
 
 from intelligence.market import Quote
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__, component="intelligence")
+
+_TRANSCRIPT_CONTEXT_LIMIT = 4000  # ~1k tokens — enough context, avoids overflow
 
 _FMP_BASE = "https://financialmodelingprep.com/api/v3/earning_call_transcript"
 
@@ -132,32 +134,33 @@ def _fetch_transcript_sync(symbol: str, fmp_api_key: str) -> str:
     year = now.year
     quarter = (now.month - 1) // 3 + 1
 
-    for _ in range(4):
-        url = f"{_FMP_BASE}/{symbol}?quarter={quarter}&year={year}&apikey={fmp_api_key}"
-        try:
-            resp = httpx.get(url, timeout=15.0)
-            resp.raise_for_status()
-            data = resp.json()
-            if data and isinstance(data, list) and data[0].get("content"):
-                logger.info(
-                    "intelligence.earnings.transcript_fetched",
+    with httpx.Client(timeout=15.0) as client:
+        for _ in range(4):
+            url = f"{_FMP_BASE}/{symbol}?quarter={quarter}&year={year}&apikey={fmp_api_key}"
+            try:
+                resp = client.get(url)
+                resp.raise_for_status()
+                data = resp.json()
+                if data and isinstance(data, list) and data[0].get("content"):
+                    logger.info(
+                        "intelligence.earnings.transcript_fetched",
+                        symbol=symbol,
+                        quarter=quarter,
+                        year=year,
+                    )
+                    return str(data[0]["content"])
+            except Exception:
+                logger.warning(
+                    "intelligence.earnings.transcript_fetch_failed",
                     symbol=symbol,
                     quarter=quarter,
                     year=year,
+                    exc_info=True,
                 )
-                return str(data[0]["content"])
-        except Exception:
-            logger.warning(
-                "intelligence.earnings.transcript_fetch_failed",
-                symbol=symbol,
-                quarter=quarter,
-                year=year,
-                exc_info=True,
-            )
-        quarter -= 1
-        if quarter == 0:
-            quarter = 4
-            year -= 1
+            quarter -= 1
+            if quarter == 0:
+                quarter = 4
+                year -= 1
 
     return ""
 
@@ -179,18 +182,21 @@ async def get_transcript_summary(
     if not transcript:
         return ""
 
-    trimmed = transcript[:4000]  # ~1k tokens — enough context, avoids overflow
+    trimmed = transcript[:_TRANSCRIPT_CONTEXT_LIMIT]
     system = (
         "Summarize this earnings call in exactly 3 concise bullet points. "
         "Cover: (1) revenue/EPS vs expectations, "
         "(2) key growth drivers or risks, "
         "(3) management guidance or outlook. Each bullet ≤ 20 words."
     )
-    return await llm.complete(
-        [Message.user(f"Earnings call transcript for {symbol}:\n\n{trimmed}")],
-        system=system,
+    result = await llm.complete(
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": f"Earnings call transcript for {symbol}:\n\n{trimmed}"},
+        ],
         max_tokens=200,
     )
+    return str(result.get("content", ""))
 
 
 # ── Formatting ────────────────────────────────────────────────────────────────

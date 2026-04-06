@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from core.config import Settings
-from core.exceptions import MemoryError as SovereignMemoryError
+from core.exceptions import SovereignMemoryError
 from memory.store import MemoryEntry, MemoryStore
 
 

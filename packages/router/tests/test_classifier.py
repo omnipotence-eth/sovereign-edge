@@ -49,7 +49,7 @@ def test_classify_career(router: IntentRouter) -> None:
 
 
 def test_classify_intelligence(router: IntentRouter) -> None:
-    result = router.classify("What is NVDA stock price today?")
+    result = router.classify("Summarize the latest arxiv papers on transformers")
     assert result.intent == IntentClass.INTELLIGENCE
 
 
@@ -78,7 +78,7 @@ def test_classify_whitespace_raises(router: IntentRouter) -> None:
         router.classify("   ")
 
 
-def test_classify_unknown_defaults_to_intelligence(router: IntentRouter) -> None:
+def test_classify_unknown_defaults_to_general(router: IntentRouter) -> None:
     result = router.classify("xyzzy frobnicator quux")
-    assert result.intent == IntentClass.INTELLIGENCE
+    assert result.intent == IntentClass.GENERAL
     assert result.confidence < 0.7

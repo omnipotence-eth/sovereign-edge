@@ -78,3 +78,33 @@ class TaskResult(BaseModel):
     cached: bool = False
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     metadata: dict[str, str] = Field(default_factory=dict)
+
+
+# ── Router types ───────────────────────────────────────────────────────────────
+
+
+class IntentClass(StrEnum):
+    """Lowercase intent identifiers used in routing results and squad state."""
+
+    SPIRITUAL = "spiritual"
+    CAREER = "career"
+    INTELLIGENCE = "intelligence"
+    CREATIVE = "creative"
+    GOALS = "goals"
+    GENERAL = "general"
+
+
+class RouterResult(BaseModel, frozen=True):
+    """Immutable result of intent classification."""
+
+    intent: IntentClass
+    confidence: float
+
+    def is_confident(self, threshold: float = 0.7) -> bool:
+        """Return True if confidence meets the threshold."""
+        return self.confidence >= threshold
+
+
+# SquadState: plain dict is the canonical squad state in LangGraph-style flows.
+# Type alias for annotation only — runtime checks must use isinstance(x, dict).
+SquadState = dict

@@ -156,3 +156,11 @@ class TraceStore:
         ).fetchall()
 
         return [dict(r) for r in rows]
+
+    def close(self) -> None:
+        """Close the underlying SQLite connection. Safe to call multiple times."""
+        with self._lock:
+            try:
+                self.conn.close()
+            except Exception:
+                logger.debug("trace_store_close_failed", exc_info=True)

@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import date, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from core.types import RoutingDecision
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -14,41 +13,41 @@ from core.types import RoutingDecision
 
 
 class TestTokenBucket:
-    def test_full_bucket_allows_first_request(self) -> None:
+    async def test_full_bucket_allows_first_request(self) -> None:
         from llm.gateway import TokenBucket
 
         bucket = TokenBucket(rpm=10)
-        assert bucket.acquire() is True
+        assert await bucket.acquire() is True
 
-    def test_empty_bucket_rejects_request(self) -> None:
+    async def test_empty_bucket_rejects_request(self) -> None:
         from llm.gateway import TokenBucket
 
         bucket = TokenBucket(rpm=2)
-        bucket.acquire()
-        bucket.acquire()
+        await bucket.acquire()
+        await bucket.acquire()
         # Bucket is now empty — third request must be rejected
-        assert bucket.acquire() is False
+        assert await bucket.acquire() is False
 
-    def test_bucket_refills_over_time(self) -> None:
+    async def test_bucket_refills_over_time(self) -> None:
         from llm.gateway import TokenBucket
 
         bucket = TokenBucket(rpm=60)  # 1 token/second
         # Drain the entire bucket
         for _ in range(60):
-            bucket.acquire()
-        assert bucket.acquire() is False
+            await bucket.acquire()
+        assert await bucket.acquire() is False
 
         # Simulate 2 seconds of wall-clock refill by back-dating _last_refill
         bucket._last_refill -= 2.0
-        assert bucket.acquire() is True
+        assert await bucket.acquire() is True
 
-    def test_tokens_cannot_exceed_rpm_capacity(self) -> None:
+    async def test_tokens_cannot_exceed_rpm_capacity(self) -> None:
         from llm.gateway import TokenBucket
 
         bucket = TokenBucket(rpm=5)
         # Wind back time by a huge amount
         bucket._last_refill -= 10_000.0
-        bucket.acquire()  # triggers refill
+        await bucket.acquire()  # triggers refill
         assert bucket._tokens <= float(bucket.rpm)
 
 
@@ -142,6 +141,8 @@ def _make_litellm_response(
 
 class TestGatewayComplete:
     async def test_successful_completion_returns_content(self) -> None:
+        import os
+
         import llm.gateway as gw_mod
 
         gw_mod._instance = None
@@ -150,6 +151,7 @@ class TestGatewayComplete:
         mock_resp = _make_litellm_response(content="Great answer", tokens_in=20, tokens_out=10)
 
         with (
+            patch.dict(os.environ, {"GROQ_API_KEY": "test-key"}),
             patch("litellm.acompletion", new=AsyncMock(return_value=mock_resp)),
             patch("litellm.completion_cost", return_value=0.00005),
         ):
@@ -158,21 +160,21 @@ class TestGatewayComplete:
                 routing=RoutingDecision.CLOUD,
             )
 
-        assert result["content"] == "Great answer"
-        assert result["tokens_in"] == 20
-        assert result["tokens_out"] == 10
-        assert result["cost_usd"] == pytest.approx(0.00005)
+        assert result == "Great answer"
 
-    async def test_cost_usd_is_nonzero_on_success(self) -> None:
-        """cost_usd must not be hardcoded 0.0 — must come from litellm.completion_cost."""
+    async def test_tokens_tracked_on_success(self) -> None:
+        """Token usage must be recorded in UsageTracker after a successful call."""
+        import os
+
         import llm.gateway as gw_mod
 
         gw_mod._instance = None
         gw = gw_mod.get_gateway()
 
-        mock_resp = _make_litellm_response(content="ok")
+        mock_resp = _make_litellm_response(content="ok", tokens_in=30, tokens_out=15)
 
         with (
+            patch.dict(os.environ, {"GROQ_API_KEY": "test-key"}),
             patch("litellm.acompletion", new=AsyncMock(return_value=mock_resp)),
             patch("litellm.completion_cost", return_value=0.00123),
         ):
@@ -181,10 +183,13 @@ class TestGatewayComplete:
                 routing=RoutingDecision.CLOUD,
             )
 
-        assert result["cost_usd"] > 0
+        assert result  # non-empty string response
+        assert gw.tracker.total_today() == 45  # 30 + 15 tokens tracked
 
     async def test_all_providers_fail_falls_back_to_local(self) -> None:
         """All cloud providers raise ServiceUnavailableError → local fallback."""
+        import os
+
         import litellm
         import llm.gateway as gw_mod
 
@@ -201,6 +206,7 @@ class TestGatewayComplete:
             )
 
         with (
+            patch.dict(os.environ, {"GROQ_API_KEY": "test-key"}),
             patch("litellm.acompletion", side_effect=_side_effect),
             patch("litellm.completion_cost", return_value=0.0),
             patch("asyncio.sleep", new=AsyncMock()),  # skip retry delays
@@ -210,8 +216,7 @@ class TestGatewayComplete:
                 routing=RoutingDecision.CLOUD,
             )
 
-        assert result["model"] == gw_mod.LOCAL_FALLBACK_MODEL
-        assert result["content"] == "local answer"
+        assert result == "local answer"
 
     async def test_local_routing_bypasses_cloud(self) -> None:
         import llm.gateway as gw_mod
@@ -229,10 +234,12 @@ class TestGatewayComplete:
                 routing=RoutingDecision.LOCAL,
             )
 
-        assert result["model"] == gw_mod.LOCAL_FALLBACK_MODEL
+        assert result == "local only"
 
     async def test_auth_error_skips_provider(self) -> None:
         """AuthenticationError must cause the provider to be skipped, not retried."""
+        import os
+
         import litellm
         import llm.gateway as gw_mod
 
@@ -250,6 +257,7 @@ class TestGatewayComplete:
             )
 
         with (
+            patch.dict(os.environ, {"GROQ_API_KEY": "test-key"}),
             patch("litellm.acompletion", new=AsyncMock(side_effect=_side_effect)),
             patch("litellm.completion_cost", return_value=0.0),
         ):
@@ -258,10 +266,12 @@ class TestGatewayComplete:
                 routing=RoutingDecision.CLOUD,
             )
 
-        # Must eventually land on local fallback, not hang in a retry loop
-        assert "content" in result
+        # Auth error skips the provider; local fallback returns "fallback"
+        assert result == "fallback"
 
     async def test_usage_tracker_updated_on_success(self) -> None:
+        import os
+
         import llm.gateway as gw_mod
 
         gw_mod._instance = None
@@ -269,6 +279,7 @@ class TestGatewayComplete:
 
         mock_resp = _make_litellm_response(tokens_in=30, tokens_out=15)
         with (
+            patch.dict(os.environ, {"GROQ_API_KEY": "test-key"}),
             patch("litellm.acompletion", new=AsyncMock(return_value=mock_resp)),
             patch("litellm.completion_cost", return_value=0.0),
         ):

@@ -9,6 +9,7 @@ Falls back to a direct gateway call when LangGraph is unavailable.
 
 from __future__ import annotations
 
+import json
 import time
 
 from core.expert import BaseExpert
@@ -39,7 +40,6 @@ class SpiritualExpert(BaseExpert):
         return await self._process_direct(task, t0)
 
     async def _process_via_subgraph(self, task: TaskRequest, t0: float) -> TaskResult:
-        import json
 
         history: list[dict[str, str]] = []
         if history_json := task.context.get("history"):
@@ -48,20 +48,24 @@ class SpiritualExpert(BaseExpert):
             except (ValueError, TypeError):
                 pass
 
-        result = await spiritual_subgraph.ainvoke(
-            {
-                "query": task.content,
-                "routing": task.routing,
-                "history": history,
-                "is_morning_brief": False,
-                "scripture": "",
-                "response": "",
-                "model_used": "",
-                "tokens_in": 0,
-                "tokens_out": 0,
-                "cost_usd": 0.0,
-            }
-        )
+        try:
+            result = await spiritual_subgraph.ainvoke(
+                {
+                    "query": task.content,
+                    "routing": task.routing,
+                    "history": history,
+                    "is_morning_brief": False,
+                    "scripture": "",
+                    "response": "",
+                    "model_used": "",
+                    "tokens_in": 0,
+                    "tokens_out": 0,
+                    "cost_usd": 0.0,
+                }
+            )
+        except Exception:
+            logger.warning("spiritual_subgraph_invoke_failed — falling back to direct", exc_info=True)
+            return await self._process_direct(task, t0)
 
         return TaskResult(
             task_id=task.task_id,
@@ -78,7 +82,6 @@ class SpiritualExpert(BaseExpert):
 
     async def _process_direct(self, task: TaskRequest, t0: float) -> TaskResult:
         """Fallback: single LLM call when LangGraph is unavailable."""
-        import json
 
         from llm.gateway import get_gateway
         from search.bible import extract_reference, format_verse, lookup, random_verse
@@ -112,7 +115,7 @@ class SpiritualExpert(BaseExpert):
             },
         ]
 
-        result = await gateway.complete(
+        content = await gateway.complete(
             messages=messages,
             max_tokens=1024,
             routing=task.routing,
@@ -122,32 +125,35 @@ class SpiritualExpert(BaseExpert):
         return TaskResult(
             task_id=task.task_id,
             expert=ExpertName.SPIRITUAL,
-            content=result["content"],
-            model_used=result["model"],
-            tokens_in=result["tokens_in"],
-            tokens_out=result["tokens_out"],
+            content=content,
+            model_used="",
+            tokens_in=0,
+            tokens_out=0,
             latency_ms=(time.monotonic() - t0) * 1000,
-            cost_usd=result["cost_usd"],
+            cost_usd=0.0,
             routing=task.routing,
         )
 
     async def morning_brief(self) -> str:
         if spiritual_subgraph is not None:
-            result = await spiritual_subgraph.ainvoke(
-                {
-                    "query": "",
-                    "routing": RoutingDecision.CLOUD,
-                    "history": [],
-                    "is_morning_brief": True,
-                    "scripture": "",
-                    "response": "",
-                    "model_used": "",
-                    "tokens_in": 0,
-                    "tokens_out": 0,
-                    "cost_usd": 0.0,
-                }
-            )
-            return result["response"]
+            try:
+                result = await spiritual_subgraph.ainvoke(
+                    {
+                        "query": "",
+                        "routing": RoutingDecision.CLOUD,
+                        "history": [],
+                        "is_morning_brief": True,
+                        "scripture": "",
+                        "response": "",
+                        "model_used": "",
+                        "tokens_in": 0,
+                        "tokens_out": 0,
+                        "cost_usd": 0.0,
+                    }
+                )
+                return result["response"]
+            except Exception:
+                logger.warning("spiritual_subgraph_morning_brief_failed — using direct", exc_info=True)
 
         # Fallback
         from llm.gateway import get_gateway
@@ -157,7 +163,7 @@ class SpiritualExpert(BaseExpert):
         verse = await random_verse()
         verse_text = format_verse(verse)
 
-        result = await gateway.complete(
+        return await gateway.complete(
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {
@@ -176,7 +182,6 @@ class SpiritualExpert(BaseExpert):
             routing=RoutingDecision.CLOUD,
             expert=self.name,
         )
-        return result["content"]
 
     async def health_check(self) -> bool:
         try:
@@ -186,7 +191,7 @@ class SpiritualExpert(BaseExpert):
                 messages=[{"role": "user", "content": "ping"}],
                 max_tokens=5,
             )
-            return bool(result.get("content"))
+            return bool(result)
         except Exception:
             logger.warning("spiritual_health_check_failed", exc_info=True)
             return False

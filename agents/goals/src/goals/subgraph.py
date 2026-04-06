@@ -62,7 +62,7 @@ _ADD_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _UPDATE_RE = re.compile(
-    r"\b(?:update|set|mark)\b.*?(?:goal\s*)?#?(\d+).*?(\d{1,3})\s*%",
+    r"\b(?:update|set|mark)\b.*?(?:goal\s*)?#?(\d+).*?(\d{1,3})\s*(?:%|percent|pct)",
     re.IGNORECASE,
 )
 _COMPLETE_RE = re.compile(
@@ -78,9 +78,11 @@ def _goal_router(state: GoalState) -> dict[str, Any]:
 
     m = _ADD_RE.search(q)
     if m:
+        title = m.group(1).strip().rstrip(".")
         return {
             "action": "add",
-            "title": m.group(1).strip().rstrip("."),
+            "title": title,
+            "description": title,  # use title as description fallback; avoids empty descriptions
             "target_date": m.group(2) if m.lastindex and m.lastindex >= 2 else None,
         }
 
@@ -194,11 +196,11 @@ async def _llm_formatter(state: GoalState) -> dict[str, Any]:
         expert="goals",
     )
     return {
-        "response": result["content"],
-        "model_used": result.get("model", ""),
-        "tokens_in": result.get("tokens_in", 0),
-        "tokens_out": result.get("tokens_out", 0),
-        "cost_usd": result.get("cost_usd", 0.0),
+        "response": result,
+        "model_used": "",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "cost_usd": 0.0,
     }
 
 

@@ -17,8 +17,9 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-import structlog
 from core.config import Settings, get_settings
+from observability.logging import get_logger
+from router.classifier import IntentRouter
 
 from voice.stt import SpeechRecognizer
 from voice.tts import TextToSpeech
@@ -27,7 +28,7 @@ from voice.wake import WakeWordDetector
 if TYPE_CHECKING:
     from orchestrator.main import Orchestrator
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__, component="voice")
 
 _WAKE_TIMEOUT = 0.0  # 0 = wait forever
 _RECORD_SECONDS = 12.0
@@ -68,6 +69,7 @@ class VoicePipeline:
         self._wake = WakeWordDetector(model_path=wake_model_path)
         self._stt = SpeechRecognizer(model_size=whisper_model or self._settings.stt_model)
         self._tts = TextToSpeech(voice=tts_voice)
+        self._router = IntentRouter()
         self._thread_id = thread_id
         self._running = False
 
@@ -82,11 +84,9 @@ class VoicePipeline:
     async def _run_turn(self, text: str) -> str:
         """Send transcribed text through the Sovereign Edge orchestrator."""
         from core.types import TaskPriority, TaskRequest
-        from router.classifier import IntentRouter
 
         try:
-            router = IntentRouter()
-            intent, _confidence, routing = await router.aroute(text)
+            intent, _confidence, routing = await self._router.aroute(text)
             request = TaskRequest(
                 content=text,
                 intent=intent,

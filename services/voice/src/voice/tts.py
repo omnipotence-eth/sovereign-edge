@@ -23,9 +23,9 @@ from __future__ import annotations
 import io
 from pathlib import Path
 
-import structlog
+from observability.logging import get_logger
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__, component="voice")
 
 _DEFAULT_KOKORO_VOICE = "af_heart"  # American English, female — highest-rated Kokoro voice
 _DEFAULT_PIPER_VOICE = "en_US-lessac-medium"
@@ -182,7 +182,7 @@ class TextToSpeech:
             sd.wait()
             logger.info("voice.tts.done", engine=self._engine)
         except ImportError:
-            logger.error("voice.tts.sounddevice_not_installed")
+            logger.error("voice.tts.sounddevice_not_installed", exc_info=True)
             raise
         except Exception:
             logger.error("voice.tts.playback_failed", exc_info=True)

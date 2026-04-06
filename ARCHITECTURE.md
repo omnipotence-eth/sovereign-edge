@@ -39,7 +39,7 @@ JETSON ORIN NANO 8GB
                                ▼
   ┌──────────────────────────────────────────────────────────────────────┐
   │  ONNX Intent Router (DistilBERT INT8, <10ms)                        │
-  │  4-class: SPIRITUAL | CAREER | INTELLIGENCE | CREATIVE              │
+  │  6-class: SPIRITUAL | CAREER | INTELLIGENCE | CREATIVE | GOALS | GENERAL │
   └────────────────────────────┬─────────────────────────────────────────┘
                                │ intent + confidence
                                ▼
@@ -88,14 +88,19 @@ sovereign-edge/
 │   └── router/                 # ONNX DistilBERT intent classifier
 │
 ├── agents/                     # Domain specialists (pure business logic)
-│   ├── orchestrator/           # LangGraph StateGraph + HITL + graph entry
+│   ├── orchestrator/           # LangGraph StateGraph + APScheduler pipeline
 │   ├── spiritual/              # Bible RAG, devotionals, theological Q&A
-│   ├── career/                 # Job scraping, resume tailoring
-│   ├── intelligence/           # Market data, arXiv, earnings, FMP
-│   └── creative/               # Script writing, diagram generation
+│   ├── career/                 # Job search, resume tailoring, market intel
+│   ├── intelligence/           # arXiv + HuggingFace paper synthesis
+│   ├── creative/               # Writing, content strategy, social media
+│   └── goals/                  # Personal goal tracking, SQLite store
 │
 ├── services/                   # Delivery channels (I/O boundaries)
-│   ├── telegram/               # PTB bot, command handlers, APScheduler
+│   ├── telegram/               # PTB bot, command handlers, streaming
+│   ├── discord/                # discord.py bot, same pipeline as Telegram
+│   ├── whatsapp/               # Twilio webhook, owner-only
+│   ├── health/                 # FastAPI health + web dashboard (HTMX)
+│   ├── mcp/                    # MCP tool server for Claude Desktop
 │   └── voice/                  # Wake word, STT, TTS, voice pipeline
 │
 ├── scripts/                    # One-shot utilities (data ingest, training)
@@ -111,12 +116,13 @@ sovereign-edge/
 ### Dependency graph (no cycles)
 
 ```
-services/telegram  ──▶  agents/orchestrator  ──▶  packages/llm
-services/voice     ──▶  agents/orchestrator  ──▶  packages/memory
-                   ──▶  agents/spiritual     ──▶  packages/core
-                   ──▶  agents/career        ──▶  packages/router
-                   ──▶  agents/intelligence  ──▶  packages/observability
-                   ──▶  agents/creative
+services/telegram   ──▶  agents/orchestrator  ──▶  packages/llm
+services/discord    ──▶  agents/orchestrator  ──▶  packages/memory
+services/whatsapp   ──▶  agents/spiritual     ──▶  packages/core
+services/mcp        ──▶  agents/career        ──▶  packages/router
+services/health     ──▶  agents/intelligence  ──▶  packages/observability
+services/voice      ──▶  agents/creative
+                    ──▶  agents/goals
 ```
 
 All agents depend only on `packages/`. Services depend on agents and packages. No package depends on an agent or service.
@@ -132,10 +138,10 @@ Foundation layer. Everything else imports from here.
 | Module | Purpose |
 |--------|---------|
 | `config.py` | `Settings` (pydantic-settings, `.env` → typed fields). `get_settings()` is `@lru_cache(maxsize=1)` — singleton per process. |
-| `exceptions.py` | `LLMError`, `ConfigurationError`, `AuthError` — typed exceptions for clean catch sites |
-| `types.py` | `IntentClass` enum (`SPIRITUAL`, `CAREER`, `INTELLIGENCE`, `CREATIVE`) |
+| `exceptions.py` | `SovereignEdgeError`, `LLMError`, `SovereignMemoryError`, `RouterError` — typed exception hierarchy |
+| `types.py` | `IntentClass` StrEnum (`spiritual`, `career`, `intelligence`, `creative`, `goals`, `general`); `RouterResult` frozen Pydantic model; `RoutingDecision` enum |
 | `security.py` | `sanitize_input()` — regex allowlist strips prompt injection patterns |
-| `logging.py` | structlog processor chain (plain dev / JSON prod) |
+| `expert.py` | `BaseExpert` abstract base class — all experts implement `process()`, `morning_brief()`, `health_check()` |
 
 ### 3.2 `packages/llm`
 
@@ -155,7 +161,7 @@ Three-tier memory:
 
 ### 3.4 `packages/router`
 
-`IntentRouter` — loads a DistilBERT INT8 ONNX model and returns `(IntentClass, confidence_float)` in <10ms. Threshold: 0.7. Below threshold defaults to `INTELLIGENCE`.
+`IntentRouter` — 3-tier classifier returning `RouterResult(intent: IntentClass, confidence: float)`. Threshold: 0.7. Below threshold returns `IntentClass.GENERAL`; the orchestrator routes `GENERAL` to the intelligence expert at dispatch time.
 
 ### 3.5 `packages/observability`
 
@@ -170,23 +176,41 @@ The control plane. See [§4 Request Lifecycle](#4-request-lifecycle).
 - `graph.py` — all LangGraph node implementations + `run_turn()` + `resume_turn()`
 - `state.py` — `SovereignState` TypedDict definition
 
-### 3.7 Agent Squads
+### 3.7 Agent Experts
 
-Each squad exposes a single `async def run(state: SovereignState) -> str` interface. The orchestrator calls this and never touches squad internals.
+Each expert extends `BaseExpert` and implements `process()`, `morning_brief()`, and `health_check()`. Internally each runs a LangGraph subgraph with a multi-node pipeline; falls back to a direct `LLMGateway.complete()` call if LangGraph is unavailable.
 
-| Squad | HITL required | Key tools |
-|-------|--------------|-----------|
-| Spiritual | No | LanceDB Bible RAG, Mem0 cross-reference |
-| Career | **Yes** (apply/email actions) | JobSpy, Jina reranker, python-docx |
-| Intelligence | No | yFinance, Alpha Vantage, arXiv API, FMP transcripts |
-| Creative | **Yes** (publish/post actions) | Manim, FFmpeg, Kokoro TTS, D2 |
+| Expert | Intent | Key tools |
+|--------|--------|-----------|
+| Spiritual | `spiritual` | bible-api.com verse lookup |
+| Career | `career` | Jina web search, job market data |
+| Intelligence | `intelligence` | arXiv Atom API, HuggingFace Hub API |
+| Creative | `creative` | Jina web search, trend research |
+| Goals | `goals` | SQLite goal store (WAL mode, threading.Lock) |
 
 ### 3.8 `services/telegram`
 
-- `bot.py` — PTB `Application`, command/message/callback handlers, HITL inline keyboards
-- `scheduler.py` — APScheduler jobs: morning brief (6am), job scan (9am), market summary (6pm)
-- Per-user rate limiting: `_RATE_LIMIT_SECONDS = 2.0` — prevents runaway message storms
-- Auth: single-user whitelist via `TELEGRAM_ALLOWED_USER_ID`
+- `bot.py` — PTB `Application`, command/message handlers, streaming via `stream_dispatch()`
+- Per-chat rate limiting: 2s cooldown, 2000-char input cap, PII-forced local routing
+- Auth: single-user whitelist via `SE_TELEGRAM_OWNER_CHAT_ID`
+
+### 3.9 `services/whatsapp`
+
+- FastAPI webhook (`POST /webhook`) — Twilio signature validation on every request
+- Owner-only: validates `From` == `SE_WHATSAPP_OWNER_NUMBER`
+- Proactive sends via `send_message()` — same interface as Telegram for morning briefs
+
+### 3.10 `services/health`
+
+- FastAPI server exposing `/health`, `/metrics`, and `/api/v1/*` dashboard endpoints
+- Bearer token auth on all `/api/v1/` routes (`SE_DASHBOARD_TOKEN`)
+- HTMX dashboard at `/` with `localStorage`-based token injection (no server-side secrets in HTML)
+
+### 3.11 `services/mcp`
+
+- `FastMCP` server exposing 4 tools: `ask_expert`, `get_memory`, `get_skills`, `get_stats`
+- `ask_expert(expert, query)` routes directly to the named expert — no content re-classification
+- stdio transport for Claude Desktop; SSE for daemon mode
 
 ### 3.9 `services/voice`
 
@@ -284,14 +308,14 @@ For each provider:
   ├─ Hard timeout: 30s per attempt (request_timeout kwarg)
   └─ On any non-LLMError exception → log warning, continue to next provider
 
-If all providers fail → raise LLMError("All LLM providers failed")
+If all providers fail → fall back to local Ollama (graceful degradation, never raises)
 ```
 
 ### Methods
 
 | Method | Use |
 |--------|-----|
-| `complete(messages, *, system, max_tokens, temperature)` | Standard single response |
+| `complete(messages, *, system, max_tokens, temperature)` | Returns `str`. Falls back to local Ollama if all cloud providers fail or none configured. |
 | `stream(messages, *, system, max_tokens, temperature)` | `AsyncGenerator[str]` token stream with provider fallback |
 | `complete_structured(messages, *, schema, system, max_tokens)` | JSON response validated against a Pydantic model (temperature=0.2) |
 
@@ -478,19 +502,23 @@ All voice dependencies are optional extras. The base package installs without an
 
 ## 11. Scheduling
 
-**File:** `services/telegram/src/telegram_bot/scheduler.py`
+**File:** `agents/orchestrator/src/orchestrator/main.py` — `_register_jobs()`
 
-APScheduler `BackgroundScheduler` with three jobs:
+APScheduler `AsyncIOScheduler` with seven cron jobs (times are `SE_TIMEZONE`, default `US/Central`):
 
-| Job | Default hour | `Settings` field | What it runs |
-|-----|-------------|-----------------|-------------|
-| Morning brief | 6am | `morning_brief_hour` | Bible verse + market pre-open + top job leads |
-| Job scan | 9am | `job_scan_hour` | Multi-board job scrape filtered to DFW + target roles |
-| Market summary | 6pm | `market_summary_hour` | Watchlist alerts + earnings context + arXiv digest |
+| Job | Time | What it runs |
+|-----|------|-------------|
+| `_morning_health_check` | 05:00 | Parallel `health_check()` on all experts |
+| `_spiritual_brief` | 05:15 | Morning devotional → Telegram |
+| `_intelligence_brief` | 05:30 | arXiv + HuggingFace digest → Telegram |
+| `_career_brief` | 06:00 | Job market scan → Telegram |
+| `_creative_brief` | 07:00 | Daily creative prompt → Telegram |
+| `_goals_brief` | 07:30 | Top 3 urgent goals + action item → Telegram |
+| `_career_rescan_brief` | 18:00 | Evening job scan → Telegram |
 
-All jobs call `run_turn()` with `schedule_trigger=<job_id>` — no special code paths, same graph as interactive turns.
+Each job calls `expert.morning_brief()` with a 90-second `asyncio.timeout`. Output is chunked at 4000 chars and delivered via `send_fn` registered by the Telegram/WhatsApp bot.
 
-Scheduler shutdown is wired to the OS signal handler in `bot.py`: `scheduler.shutdown(wait=False)` followed by `os._exit(0)`.
+`misfire_grace_time=300` — scheduler tolerates up to 5 minutes of host sleep/restart before skipping a missed job.
 
 ---
 
@@ -625,7 +653,7 @@ Consistent with the `get_settings()` pattern already in the codebase. Lazy initi
 
 ## 15. Testing Strategy
 
-**171 tests, 0 failures** (as of last audit pass).
+**215 tests, 0 failures** (as of last audit pass).
 
 ### Philosophy
 

@@ -1,6 +1,19 @@
+"""
+Prompt injection defense — sanitizes untrusted user input before LLM injection.
+
+This is a secondary defense layer. Primary protection is role-separated system prompts;
+this regex catches obvious jailbreak attempts before they reach the LLM context.
+
+Usage:
+    from core.security import sanitize_input
+    clean = sanitize_input(user_message)
+"""
+
 from __future__ import annotations
 
 import re
+
+__all__ = ["sanitize_input"]
 
 # Common prompt injection / jailbreak patterns — defense in depth.
 # Primary protection is always role-separated system prompts; this catches

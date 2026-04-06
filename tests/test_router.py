@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from core.types import Intent, RoutingDecision
+from core.types import Intent, IntentClass, RoutingDecision
 from router.classifier import LOW_CONFIDENCE_THRESHOLD, IntentRouter
 from router.pii import PIIDetector
 
@@ -96,51 +96,51 @@ class TestIntentRouterKeywords:
         self.router = IntentRouter()
 
     def test_spiritual_keyword(self) -> None:
-        intent, _ = self.router.classify("What does the Bible say about forgiveness?")
-        assert intent == Intent.SPIRITUAL
+        result = self.router.classify("What does the Bible say about forgiveness?")
+        assert result.intent == IntentClass.SPIRITUAL
 
     def test_career_keyword(self) -> None:
-        intent, _ = self.router.classify("Help me update my resume for a data science job")
-        assert intent == Intent.CAREER
+        result = self.router.classify("Help me update my resume for a data science job")
+        assert result.intent == IntentClass.CAREER
 
     def test_intelligence_keyword(self) -> None:
-        intent, _ = self.router.classify("Summarize the latest arxiv papers on transformers")
-        assert intent == Intent.INTELLIGENCE
+        result = self.router.classify("Summarize the latest arxiv papers on transformers")
+        assert result.intent == IntentClass.INTELLIGENCE
 
     def test_creative_keyword(self) -> None:
-        intent, _ = self.router.classify("Write a YouTube script about GRPO training")
-        assert intent == Intent.CREATIVE
+        result = self.router.classify("Write a YouTube script about GRPO training")
+        assert result.intent == IntentClass.CREATIVE
 
     def test_general_returns_default_confidence(self) -> None:
-        intent, confidence = self.router.classify("How are you today?")
-        assert intent == Intent.GENERAL
-        assert confidence == pytest.approx(0.5)
+        result = self.router.classify("How are you today?")
+        assert result.intent == IntentClass.GENERAL
+        assert result.confidence == pytest.approx(0.5)
 
     def test_confidence_above_zero_for_matched_intent(self) -> None:
-        _, confidence = self.router.classify("Pray for wisdom")
-        assert confidence > 0.5
+        result = self.router.classify("Pray for wisdom")
+        assert result.confidence > 0.5
 
     def test_confidence_capped_at_0_95(self) -> None:
         # Very keyword-heavy text — should still cap at 0.95
         text = "bible verse prayer scripture devotion faith church worship sermon"
-        _, confidence = self.router.classify(text)
-        assert confidence <= 0.95
+        result = self.router.classify(text)
+        assert result.confidence <= 0.95
 
     # ── Multi-word priority ───────────────────────────────────────────────────
 
     def test_cover_letter_maps_to_career_not_creative(self) -> None:
         """'cover letter' is a 2-word key → CAREER; 'write' alone → CREATIVE.
         Multi-word key must win when both are present."""
-        intent, _ = self.router.classify("Write me a cover letter for this job")
-        assert intent == Intent.CAREER
+        result = self.router.classify("Write me a cover letter for this job")
+        assert result.intent == IntentClass.CAREER
 
     def test_machine_learning_maps_to_intelligence(self) -> None:
-        intent, _ = self.router.classify("Explain machine learning to me")
-        assert intent == Intent.INTELLIGENCE
+        result = self.router.classify("Explain machine learning to me")
+        assert result.intent == IntentClass.INTELLIGENCE
 
     def test_linkedin_post_maps_to_creative(self) -> None:
-        intent, _ = self.router.classify("Draft a LinkedIn post about my project")
-        assert intent == Intent.CREATIVE
+        result = self.router.classify("Draft a LinkedIn post about my project")
+        assert result.intent == IntentClass.CREATIVE
 
 
 # ─────────────────────────────────────────────────────────────────────────────

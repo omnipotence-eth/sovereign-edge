@@ -4,7 +4,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from core.config import Settings
-from core.exceptions import LLMError
 from llm.gateway import LLMGateway, Message
 
 
@@ -49,10 +48,12 @@ def test_message_assistant_factory() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_complete_raises_when_no_providers(settings_no_keys: Settings) -> None:
+async def test_complete_falls_back_to_local_when_no_providers(settings_no_keys: Settings) -> None:
+    """When no cloud keys are configured, complete() falls back to local Ollama."""
     gw = LLMGateway(settings=settings_no_keys)
-    with pytest.raises(LLMError, match="No LLM providers configured"):
-        await gw.complete([Message.user("hi")])
+    with patch.object(gw, "_call_local", new=AsyncMock(return_value={"content": "local answer"})):
+        result = await gw.complete([Message.user("hi")])
+    assert result == "local answer"
 
 
 # ── Successful completion ─────────────────────────────────────────────────────
@@ -114,7 +115,8 @@ async def test_complete_falls_over_to_next_provider() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_complete_raises_llm_error_when_all_fail() -> None:
+async def test_complete_falls_back_to_local_when_all_fail() -> None:
+    """When all cloud providers raise, complete() falls back to local Ollama."""
     import litellm
 
     settings = Settings(groq_api_key="gsk_test")
@@ -123,19 +125,24 @@ async def test_complete_raises_llm_error_when_all_fail() -> None:
     async def always_fail(**kwargs: object) -> None:
         raise litellm.APIConnectionError("down", llm_provider="groq", model="llama")
 
+    local_mock = AsyncMock(return_value={"content": "local fallback"})
     with patch.object(gw, "_call_with_retry", new=always_fail):
-        with pytest.raises(LLMError, match="All LLM providers failed"):
-            await gw.complete([Message.user("q")])
+        with patch.object(gw, "_call_local", new=local_mock):
+            result = await gw.complete([Message.user("q")])
+    assert result == "local fallback"
 
 
 # ── Empty response guard ──────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio()
-async def test_complete_raises_on_empty_content(settings_groq: Settings) -> None:
+async def test_complete_falls_back_on_empty_content(settings_groq: Settings) -> None:
+    """Empty provider response skips that provider; falls back to local Ollama."""
     gw = LLMGateway(settings=settings_groq)
     mock_resp = _mock_response("")
 
+    local_mock = AsyncMock(return_value={"content": "local answer"})
     with patch.object(gw, "_call_with_retry", new=AsyncMock(return_value=mock_resp)):
-        with pytest.raises(LLMError, match="Empty response"):
-            await gw.complete([Message.user("q")])
+        with patch.object(gw, "_call_local", new=local_mock):
+            result = await gw.complete([Message.user("q")])
+    assert result == "local answer"
