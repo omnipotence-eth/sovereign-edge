@@ -221,7 +221,9 @@ class IntentRouter:
                     providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
                 )
                 tokenizer_dir = Path(resolved_path).parent / "tokenizer"
-                tokenizer_source = str(tokenizer_dir) if tokenizer_dir.exists() else "distilbert-base-uncased"
+                tokenizer_source = (
+                    str(tokenizer_dir) if tokenizer_dir.exists() else "distilbert-base-uncased"
+                )
                 self._tokenizer = AutoTokenizer.from_pretrained(tokenizer_source)
                 self._use_onnx = True
                 logger.info("onnx_classifier_loaded path=%s", resolved_path)
