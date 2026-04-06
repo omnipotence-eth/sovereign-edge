@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 MAX_TURNS = 8  # turns injected into each expert request
 MAX_STORED = 40  # turns retained per chat_id before pruning
+MAX_HISTORY_TOKENS = 2000  # per-request token budget for history (4 chars ≈ 1 token)
 
 
 class ConversationStore:
@@ -88,16 +89,26 @@ class ConversationStore:
             logger.error("conversation_add_turn_failed chat_id=%s", chat_id, exc_info=True)
 
     def get_recent(self, chat_id: str, n: int = MAX_TURNS) -> list[dict[str, str]]:
-        """Return the last *n* turns as [{"role":..., "content":...}] oldest-first."""
+        """Return the last *n* turns as [{"role":..., "content":...}] oldest-first.
+
+        Trims oldest turns until estimated token count is within MAX_HISTORY_TOKENS.
+        This caps context cost regardless of message length.
+        """
         try:
             rows = self.conn.execute(
                 "SELECT role, content FROM turns WHERE chat_id=? ORDER BY id DESC LIMIT ?",
                 (chat_id, n),
             ).fetchall()
-            return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+            turns = [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
         except sqlite3.Error:
             logger.error("conversation_get_recent_failed chat_id=%s", chat_id, exc_info=True)
             return []
+
+        # Trim oldest turns while over budget — always keep the most recent turn
+        while len(turns) > 1 and sum(len(t["content"]) for t in turns) // 4 > MAX_HISTORY_TOKENS:
+            turns.pop(0)
+
+        return turns
 
     def get_recent_json(self, chat_id: str, n: int = MAX_TURNS) -> str:
         """JSON-encoded history string for TaskRequest.context injection."""

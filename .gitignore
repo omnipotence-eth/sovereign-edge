@@ -6,8 +6,8 @@ __pycache__/
 dist/
 build/
 
-# uv
-uv.lock
+# uv — lock file IS committed (reproducible builds on Jetson + CI)
+# uv.lock
 
 # Secrets (NEVER commit plaintext secrets)
 secrets/env.yaml

@@ -9,6 +9,17 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `.pre-commit-config.yaml`: ruff + ruff-format + pre-commit-hooks run automatically on every commit.
+- `.github/dependabot.yml`: weekly grouped dependency PRs; LiteLLM pinned exception documented.
+- `.github/workflows/release.yml`: tag `vX.Y.Z` → GitHub Release with CHANGELOG entry extracted automatically.
+- `MAX_HISTORY_TOKENS` budget in `ConversationStore.get_recent()` — trims oldest turns so history never exceeds ~2000 estimated tokens per request.
+- `pytest-cov` + `pre-commit` added as workspace dev dependencies.
+- Coverage reporting (`--cov` + `--cov-report=term-missing`) added to CI test job.
+
+### Changed
+- `uv.lock` removed from `.gitignore` — lock file is now committed for reproducible builds.
+
 ---
 
 ## [0.3.4] — 2026-04-06

@@ -1,0 +1,21 @@
+version: 2
+
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      all-deps:
+        patterns:
+          - "*"
+    ignore:
+      # LiteLLM pinned at 1.82.6 — 1.82.7/1.82.8 had a supply chain compromise.
+      # Only upgrade after auditing the release notes and confirming the fix.
+      - dependency-name: "litellm"
+        update-types: ["version-update:semver-patch", "version-update:semver-minor"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

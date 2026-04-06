@@ -45,9 +45,11 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-packages
 
-      - name: Run tests
+      - name: Run tests with coverage
         run: |
           uv run pytest -q --tb=short \
+            --cov=packages --cov=agents --cov=services \
+            --cov-report=term-missing \
             --ignore=evals \
             --ignore=agents/creative/tests \
             --ignore=agents/spiritual/tests \
