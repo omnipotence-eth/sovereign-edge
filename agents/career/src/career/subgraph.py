@@ -204,15 +204,12 @@ def build_search_queries() -> list[str]:
 
     s = get_settings()
     location = s.career_target_location
-    roles = s.career_target_roles.replace(", ", " OR ").replace(",", " OR ")
+    roles = s.career_target_roles
     today = datetime.date.today()
-    freshness = f"{today.year}-{today.month:02d}"
     return [
-        # Primary: target ATS platforms directly — greenhouse/lever/workday URLs are
-        # stable and don't expire when a position closes (unlike LinkedIn/Indeed).
-        f'({_ATS_SITES}) ({roles}) ("Dallas" OR "Plano" OR "Irving" OR "Fort Worth" OR "Texas" OR remote) {today.year}',  # noqa: E501
-        # Secondary: general freshness-filtered fallback
-        f'("{roles}") ("{location}" OR "Dallas" OR "Plano" OR "Irving" OR "Frisco") hiring {freshness} -filled -expired',  # noqa: E501
+        # Jina is a semantic search API — no site: or Google operators.
+        f"{roles} jobs hiring Dallas Fort Worth Texas {today.year}",
+        f"machine learning AI engineer positions {location} {today.year}",
     ]
 
 
@@ -255,12 +252,11 @@ async def _job_searcher(state: CareerState) -> dict[str, Any]:
             s = get_settings()
             location = s.career_target_location
             year = datetime.date.today().year
+            # Jina is a semantic search API — no site: or -word operators.
+            # Keep queries short and natural-language.
             queries = [
-                # ATS-targeted first — stable links from greenhouse/lever/workday
-                f'({_ATS_SITES}) {state["query"]} ML Engineer AI ("Texas" OR remote) {year}',
-                # General freshness-filtered fallback
-                f'{state["query"]} ML Engineer AI job "{location}" OR "Dallas" OR "Plano"'
-                f' OR "Irving" {year} -"New York" -"San Francisco" -"Chicago" -"Seattle" -"Austin" -filled -expired',  # noqa: E501
+                f"ML Engineer AI jobs {state['query']} Dallas Fort Worth Texas {year}",
+                f"machine learning engineer jobs hiring {location} {year}",
             ]
 
         raw = await asyncio.gather(

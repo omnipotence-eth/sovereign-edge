@@ -108,6 +108,7 @@ def _build_providers(s: Settings) -> list[ProviderConfig]:
             tpd=33_000_000,
             priority=4,
             env_key="MISTRAL_API_KEY",
+            supports_structured=False,  # Returns free-text instead of tool calls
         ),
     ]
 

@@ -70,9 +70,17 @@ def _get_client() -> httpx.AsyncClient:
 
 
 def extract_reference(text: str) -> str | None:
-    """Try to extract a scripture reference from free text."""
+    """Try to extract a scripture reference from free text.
+
+    Returns None for bare book names (e.g. "Proverbs", "prov") — bible-api.com
+    requires at least a chapter number; bare names 404.
+    """
     match = _REF_PATTERN.search(text)
-    return match.group(0).strip() if match else None
+    if match is None:
+        return None
+    ref = match.group(0).strip()
+    # Require at least a chapter digit — bare book names produce 404 on bible-api.com
+    return ref if any(c.isdigit() for c in ref) else None
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
