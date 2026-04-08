@@ -4583,7 +4583,7 @@ dev = [
 
 [[package]]
 name = "sovereign-edge-career"
-version = "0.3.7"
+version = "0.3.8"
 source = { editable = "agents/career" }
 dependencies = [
     { name = "langgraph" },
@@ -4644,7 +4644,7 @@ requires-dist = [
 
 [[package]]
 name = "sovereign-edge-director"
-version = "0.3.6"
+version = "0.3.7"
 source = { editable = "agents/director" }
 dependencies = [
     { name = "langgraph" },
@@ -4882,7 +4882,7 @@ requires-dist = [
 
 [[package]]
 name = "sovereign-edge-search"
-version = "0.3.7"
+version = "0.3.8"
 source = { editable = "packages/search" }
 dependencies = [
     { name = "defusedxml" },

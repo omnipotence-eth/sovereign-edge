@@ -249,8 +249,9 @@ STRONG RECOMMENDATION: Only surface jobs with score ≥ 3.5. Flag 4.5+ as priori
         f"  1. Company careers page (careers.company.com) — most stable\n"
         f"  2. Direct ATS link (greenhouse.io, lever.co, workday.com, icims.com)\n"
         f"  3. LinkedIn or Indeed URL — only if no stable link is available\n\n"
-        f"When no search results are available, share 2-3 known {location} ML/AI employers\n"
-        f"actively hiring and link directly to their careers pages."
+        f"CRITICAL: Only list jobs explicitly present in the LIVE SEARCH RESULTS above. "
+        f"Never generate, guess, or fabricate job listings, companies, or URLs. "
+        f"If no search results are provided, state that clearly."
         f"{resume_section}"
         f"\n\n{scoring_rules}"
     )
@@ -436,6 +437,29 @@ async def _strategist(state: CareerState) -> dict[str, Any]:
 
     gateway = get_gateway()
     system_prompt = build_system_prompt(resume_context=state.get("resume_context", ""))
+
+    # Early return when no live data — do not hallucinate
+    if not state["search_results"]:
+        if state["is_morning_brief"]:
+            msg = (
+                "*Morning Job Brief*\n\n"
+                "No new DFW positions found today. "
+                "Job APIs (The Muse, Remotive, Adzuna) returned 0 new listings. "
+                "Check back tomorrow — Adzuna refreshes daily."
+            )
+        else:
+            msg = (
+                "No live job listings found right now. "
+                "The job APIs returned 0 results for DFW ML/AI roles. "
+                "Try again tomorrow, or ask me to check a specific company's careers page."
+            )
+        return {
+            "response": msg,
+            "model_used": "none",
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "cost_usd": 0.0,
+        }
 
     if state["is_morning_brief"]:
         header = (

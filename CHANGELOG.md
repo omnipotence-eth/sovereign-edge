@@ -19,6 +19,11 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `pypdf>=4.0,<5.0` added to `sovereign-edge-search` dependencies for resume parsing.
 - Startup warning when `SE_CAREER_RESUME_PATH` directory is missing.
 
+### Fixed
+- `agents/career/src/career/subgraph.py`: Removed hallucination instruction from `build_system_prompt()` that told the LLM to generate fake job listings when no API results were available. Replaced with strict "only list from provided search results" rule.
+- `agents/career/src/career/subgraph.py`: Added early return in `_strategist()` when `search_results == ""` — returns an honest "no live jobs found" message without calling the LLM. Prevents token waste and eliminates the hallucination path entirely.
+- `packages/search/src/search/jobs.py`: Expanded The Muse query set from 3 to 5 — added "Engineering" (DFW + Remote) and "Data & Analytics" (DFW) categories to capture ML Engineer roles not listed under "Data Science". Removed "Software Engineer" (too noisy for ML filtering).
+
 ### Changed
 - `agents/career/src/career/subgraph.py`: `_job_searcher` node now runs The Muse + Remotive + Adzuna + Jina in parallel (was Jina-only). Deduplicates via `JobStore` before passing to strategist. Loads resume profile via `asyncio.to_thread`. `_MAX_SEARCH_CHARS` raised from 10K to 12K.
 - `agents/career/src/career/subgraph.py`: `build_system_prompt()` now accepts `resume_context` and injects candidate skill profile into LLM system prompt.

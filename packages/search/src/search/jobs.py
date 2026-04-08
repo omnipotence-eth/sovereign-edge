@@ -74,12 +74,9 @@ async def _fetch_muse(client: httpx.AsyncClient) -> list[JobRawListing]:
     query_params = [
         {"category": "Data Science", "location": "Dallas, TX", "page": 1, "descending": "true"},
         {"category": "Data Science", "location": "Remote", "page": 1, "descending": "true"},
-        {
-            "category": "Software Engineer",
-            "location": "Dallas, TX",
-            "page": 1,
-            "descending": "true",
-        },
+        {"category": "Engineering", "location": "Dallas, TX", "page": 1, "descending": "true"},
+        {"category": "Engineering", "location": "Remote", "page": 1, "descending": "true"},
+        {"category": "Data & Analytics", "location": "Dallas, TX", "page": 1, "descending": "true"},
     ]
     for params in query_params:
         try:
