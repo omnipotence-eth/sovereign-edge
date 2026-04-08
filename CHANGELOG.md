@@ -10,6 +10,23 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `packages/search/src/search/jobs.py`: multi-source job fetcher — The Muse (free, no auth), Remotive (free, no auth), Adzuna (free 50 RPD with SE_ADZUNA_APP_ID/KEY). All sources run in parallel via asyncio.gather. ML/AI title filtering built in.
+- `packages/search/src/search/job_store.py`: SQLite-backed job deduplication — SHA-1 keyed by (company, title), 7-day dedup window (configurable via SE_CAREER_DEDUP_WINDOW_DAYS). Tracks applied status. Prevents same jobs appearing in every morning brief.
+- `packages/search/src/search/resume_intel.py`: PDF resume intelligence — parses all PDFs from SE_CAREER_RESUME_PATH via pypdf, extracts 9-category skill taxonomy (llm_serving, training, agentic_frameworks, mlops, etc.), returns `ResumeProfile` with context string for LLM injection.
+- `agents/intelligence/src/intelligence/subgraph.py`: `project_suggestion` field on `IntelBriefResponse` — LLM now suggests a new portfolio project for papers with no matching repo. Rendered in morning brief as "*New project idea:*" line.
+- `JobListingResponse.skill_gap` field — LLM now surfaces one skill gap between job requirements and candidate resume profile (shown in brief).
+- Config: `SE_CAREER_RESUME_PATH`, `SE_CAREER_JOB_DB_PATH`, `SE_CAREER_DEDUP_WINDOW_DAYS`, `SE_ADZUNA_APP_ID`, `SE_ADZUNA_APP_KEY` settings added.
+- `pypdf>=4.0,<5.0` added to `sovereign-edge-search` dependencies for resume parsing.
+- Startup warning when `SE_CAREER_RESUME_PATH` directory is missing.
+
+### Changed
+- `agents/career/src/career/subgraph.py`: `_job_searcher` node now runs The Muse + Remotive + Adzuna + Jina in parallel (was Jina-only). Deduplicates via `JobStore` before passing to strategist. Loads resume profile via `asyncio.to_thread`. `_MAX_SEARCH_CHARS` raised from 10K to 12K.
+- `agents/career/src/career/subgraph.py`: `build_system_prompt()` now accepts `resume_context` and injects candidate skill profile into LLM system prompt.
+- `agents/career/src/career/subgraph.py`: `CareerState` adds `new_job_count` and `resume_context` fields. Morning brief header shows new job count.
+- `agents/intelligence/src/intelligence/subgraph.py`: `MORNING_PROMPT` updated with portfolio gap check instruction.
+- Package versions bumped: `sovereign-edge-search 0.3.7`, `sovereign-edge-career 0.3.7`.
+
+### Added (prior)
 - `CLAUDE.md` (project root): comprehensive Claude Code guide — architecture, key files, running, testing, deployment, known constraints, and per-change conventions.
 - `.pre-commit-config.yaml`: ruff + ruff-format + pre-commit-hooks run automatically on every commit.
 - `.github/dependabot.yml`: weekly grouped dependency PRs; LiteLLM pinned exception documented.

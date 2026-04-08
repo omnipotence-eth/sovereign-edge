@@ -103,6 +103,17 @@ class Settings(BaseSettings):
     career_target_roles: str = "ML Engineer, AI Engineer, LLM Engineer"
     career_differentiators: str = ""  # comma-separated; empty = generic coaching
 
+    # Career Expert — job intelligence and resume matching
+    # Path to folder containing resume PDFs (used for skill extraction + job matching)
+    career_resume_path: Path = Path.home() / "Documents" / "Job Search" / "Resumes"
+    # SQLite DB for job deduplication. None = use ssd_root/jobs.db
+    career_job_db_path: Path | None = None
+    # Don't resurface jobs seen within this many days
+    career_dedup_window_days: int = 7
+    # Adzuna free job API — sign up at developer.adzuna.com (50 req/day free)
+    adzuna_app_id: SecretStr = SecretStr("")   # SE_ADZUNA_APP_ID
+    adzuna_app_key: SecretStr = SecretStr("")  # SE_ADZUNA_APP_KEY
+
     # Intelligence Expert — comma-separated repo topics for paper relevance scoring
     # e.g. "bible-ai:rag,orpo,fine-tuning,graphrag; sovereign-edge:langgraph,agents,mcp; gpu-suite:inference,tensorrt,vllm"  # noqa: E501
     repo_topics: str = "bible-ai:rag,orpo,fine-tuning,graphrag,retrieval; sovereign-edge:langgraph,agents,mcp,tool-use; gpu-suite:inference,tensorrt,vllm,exllamav2,quantization,benchmark,cuda"  # noqa: E501
@@ -193,4 +204,15 @@ def log_startup_warnings() -> None:
         logger.info(
             "startup_no_jina_key — web search limited to ~200 RPD free tier; "
             "set SE_JINA_API_KEY for unlimited"
+        )
+    if not s.adzuna_app_id.get_secret_value():
+        logger.info(
+            "startup_no_adzuna_key — Adzuna job source disabled; "
+            "free signup at developer.adzuna.com then set SE_ADZUNA_APP_ID + SE_ADZUNA_APP_KEY"
+        )
+    if not s.career_resume_path.exists():
+        logger.warning(
+            "startup_resume_path_missing path=%s — resume skill matching disabled; "
+            "set SE_CAREER_RESUME_PATH to your resumes folder",
+            s.career_resume_path,
         )

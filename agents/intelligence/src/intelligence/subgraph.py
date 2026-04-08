@@ -110,10 +110,14 @@ Be precise, cite sources, and flag uncertainty explicitly.\
 
 MORNING_PROMPT = """\
 Based on the live research data above, generate a concise intelligence briefing
-(≤ 200 words):
+(≤ 250 words):
 1. One significant AI/ML development from the papers above worth knowing today.
 2. One technique or finding directly relevant to LLM fine-tuning or inference optimization.
 3. One actionable insight — something to try or watch for.
+4. PORTFOLIO GAP CHECK: If any paper introduces a technique with no matching repo listed
+   above, add one sentence: "*New project idea:* [paper technique] → [proposed project
+   name] — [1-sentence resume impact for ML Engineer job search]."
+   Omit section 4 entirely if all papers already match an existing repo.
 Be specific. Cite paper titles and link them.\
 """
 
@@ -164,6 +168,14 @@ class IntelBriefResponse(BaseModel):
         default="",
         description="One concrete thing to try or watch for this week (1 sentence)",
     )
+    project_suggestion: str = Field(
+        default="",
+        description=(
+            "If any paper introduces a technique with no matching repo, suggest one new "
+            "portfolio project in one sentence: 'Build X — strengthens Y for ML job search'. "
+            "Empty string if all papers already match an existing repo."
+        ),
+    )
 
 
 def format_intel_brief(brief: IntelBriefResponse, repo_relevant: list[dict]) -> str:
@@ -187,6 +199,9 @@ def format_intel_brief(brief: IntelBriefResponse, repo_relevant: list[dict]) -> 
         lines.append(f"*Technique:* {brief.technique_highlight}")
     if brief.actionable_insight:
         lines.append(f"*Try this:* {brief.actionable_insight}")
+    if brief.project_suggestion:
+        lines.append("")
+        lines.append(f"*New project idea:* {brief.project_suggestion}")
 
     return "\n".join(lines).strip()
 

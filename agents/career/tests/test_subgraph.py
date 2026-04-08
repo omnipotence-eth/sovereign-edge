@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 from career.subgraph import (
-    _ATS_SITES,
     JobListing,
     JobListingResponse,
     _check_url_live,
@@ -133,25 +132,19 @@ def test_build_search_queries_returns_two_queries() -> None:
     assert len(queries) == 2
 
 
-def test_build_search_queries_first_query_targets_ats() -> None:
+def test_build_search_queries_first_query_targets_dfw() -> None:
+    """First Jina query must include a DFW city or region keyword."""
     queries = build_search_queries()
-    first = queries[0]
-    assert "greenhouse.io" in first
-    assert "lever.co" in first
+    first = queries[0].lower()
+    assert "dallas" in first or "fort worth" in first or "dfw" in first
 
 
-def test_build_search_queries_second_query_has_freshness() -> None:
+def test_build_search_queries_has_current_year() -> None:
     import datetime
 
     queries = build_search_queries()
-    second = queries[1]
-    assert str(datetime.date.today().year) in second
-
-
-def test_ats_sites_constant_includes_major_platforms() -> None:
-    assert "greenhouse.io" in _ATS_SITES
-    assert "lever.co" in _ATS_SITES
-    assert "workday.com" in _ATS_SITES
+    year = str(datetime.date.today().year)
+    assert any(year in q for q in queries)
 
 
 # ── _check_url_live ───────────────────────────────────────────────────────────

@@ -4,8 +4,9 @@ Career expert — LangGraph subgraph.
 Pipeline:
     START → job_searcher → strategist → END
 
-job_searcher  — Jina web search for live job listings / market data
-strategist    — LLM synthesizes search results into career advice / brief
+job_searcher  — Multi-source job fetching (The Muse + Remotive + Adzuna + Jina),
+                SQLite deduplication (7-day window), resume skill extraction.
+strategist    — LLM synthesizes new listings + resume profile into career advice/brief.
 """
 
 from __future__ import annotations
@@ -36,12 +37,7 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-# ATS platforms with stable, non-expiring job URLs (unlike LinkedIn/Indeed)
-_ATS_SITES = (
-    "site:greenhouse.io OR site:boards.greenhouse.io OR site:jobs.lever.co "
-    "OR site:wd1.myworkday.com OR site:jobs.ashbyhq.com OR site:icims.com"
-)
-_MAX_SEARCH_CHARS = 10_000  # merged cap across parallel Jina queries
+_MAX_SEARCH_CHARS = 12_000  # merged cap for all sources combined
 
 # ── Structured output models ───────────────────────────────────────────────────
 
@@ -74,7 +70,7 @@ _DFW_CITIES: frozenset[str] = frozenset(
 
 
 class JobListing(BaseModel):
-    """A single verified DFW job listing."""
+    """A single verified DFW job listing with A-F fit score."""
 
     company: str = Field(description="Company name")
     title: str = Field(description="Exact job title")
@@ -86,11 +82,31 @@ class JobListing(BaseModel):
     )
     salary_range: str = Field(default="", description="Salary range if listed, else empty string")
     apply_url: str = Field(description="Direct application URL")
+    score: float = Field(
+        default=0.0,
+        description=(
+            "Fit score 0.0-5.0. Weighted across: "
+            "A) Role archetype match (ML/AI/LLM/Agentic/LLMOps) "
+            "B) Skill alignment with candidate profile "
+            "C) Seniority level fit (mid/senior) "
+            "D) Location/remote eligibility. "
+            "5.0 = perfect match, 4.0+ = strong, 3.0-4.0 = reasonable, <3.0 = weak."
+        ),
+    )
+    score_rationale: str = Field(
+        default="",
+        description="One sentence explaining the score — what drives it up or down.",
+    )
 
     @field_validator("city", mode="before")
     @classmethod
     def normalize_city(cls, v: str) -> str:
         return v.strip().title()
+
+    @field_validator("score", mode="before")
+    @classmethod
+    def clamp_score(cls, v: float) -> float:
+        return max(0.0, min(5.0, float(v)))
 
     @property
     def is_dfw_eligible(self) -> bool:
@@ -101,12 +117,23 @@ class JobListing(BaseModel):
             "hybrid",
         )
 
+    @property
+    def score_stars(self) -> str:
+        """Star rating string for Telegram display."""
+        filled = round(self.score)
+        return "★" * filled + "☆" * (5 - filled)
+
 
 class JobListingResponse(BaseModel):
     """Structured response from the career strategist."""
 
     jobs: list[JobListing] = Field(description="Job listings found, DFW-eligible only")
     action_today: str = Field(description="One concrete action to take today (1 sentence)")
+    skill_gap: str = Field(
+        default="",
+        description="One skill gap observed between job requirements and candidate profile "
+        "(1 sentence). Empty if no gap is apparent.",
+    )
 
 
 def format_job_listings(response: JobListingResponse) -> str:
@@ -120,13 +147,18 @@ def format_job_listings(response: JobListingResponse) -> str:
     for i, job in enumerate(eligible, 1):
         salary = f" | {job.salary_range}" if job.salary_range else ""
         mode = f" ({job.work_mode.title()})" if job.work_mode != "onsite" else ""
-        lines.append(f"{i}. *{job.company}* — {job.title}")
+        score_str = f" {job.score_stars} {job.score:.1f}/5" if job.score > 0 else ""
+        lines.append(f"{i}.{score_str} *{job.company}* — {job.title}")
         lines.append(f"   _{job.city}, {job.state}{mode}_{salary}")
+        if job.score_rationale:
+            lines.append(f"   _{job.score_rationale}_")
         lines.append(f"   [Apply →]({job.apply_url})")
         lines.append("")
 
     if response.action_today:
         lines.append(f"*Action today:* {response.action_today}")
+    if response.skill_gap:
+        lines.append(f"*Skill gap noted:* {response.skill_gap}")
 
     return "\n".join(lines).strip()
 
@@ -163,11 +195,17 @@ Skip any job not located in the configured target area (remote-eligible is OK).\
 MORNING_PROMPT = """\
 Based on the live job market data above, list the top DFW jobs found today using the
 job list format above. Then add one sentence: a high-value action to take today.
-Max 5 job listings. Only include jobs in the configured location or remote-eligible.\
+Max 5 job listings. Only include jobs in the configured location or remote-eligible.
+If a candidate skill profile was provided, note any significant skill gap in one sentence.\
 """
 
 
-def build_system_prompt() -> str:
+def build_system_prompt(resume_context: str = "") -> str:
+    """Build the career strategist system prompt.
+
+    Injects resume skill profile when provided so the LLM can match jobs
+    to the candidate's actual skills and flag gaps.
+    """
     from core.config import get_settings
 
     s = get_settings()
@@ -179,27 +217,47 @@ def build_system_prompt() -> str:
         if s.career_differentiators
         else ""
     )
+    resume_section = f"\n\n{resume_context}" if resume_context else ""
+
+    scoring_rules = """\
+
+JOB FIT SCORING — MANDATORY for every listing:
+Score each job 0.0-5.0 across four dimensions (weight in parentheses):
+  A. Archetype match (30%): Does the role align with ML/AI/LLM engineering, LLMOps,
+     or agentic systems? Exact title match = 5, adjacent = 3, stretch = 1.
+  B. Skill alignment (30%): How well do the JD's required skills match the candidate
+     profile above? Count matched skills as a fraction of required skills.
+  C. Level fit (20%): Mid/ML Engineer II/Senior = 5, Junior = 2, Principal/Staff = 3
+     (stretch). Roles requiring 5+ years where candidate has 2 = 2.5.
+  D. Location (20%): DFW on-site or hybrid = 5, US remote = 4.5, other = 1.
+Final score = (A*0.30) + (B*0.30) + (C*0.20) + (D*0.20). Round to 1 decimal.
+Also write one sentence in score_rationale explaining the primary driver.
+STRONG RECOMMENDATION: Only surface jobs with score ≥ 3.5. Flag 4.5+ as priority.\
+"""
+
     return (
         f"{_FORMAT_RULES}\n\n---\n\n"
         f"You are the Career Intelligence of Sovereign Edge — a world-class career strategist\n"
         f"specializing in {roles} roles.\n\n"
-        f"TARGET AREA: {location}. Only include jobs located in one of these cities: {cities},\n"
-        f"OR jobs explicitly marked remote/hybrid that are open to {location} candidates.\n"
+        f"TARGET AREA: {location}. Only include jobs in: {cities},\n"
+        f"OR jobs explicitly marked remote/hybrid open to {location} candidates.\n"
         f"HARD RULE: Do not list jobs in other cities (NYC, SF, Seattle, etc.) unless remote.\n\n"
         f"You have access to live search results. For each job listing extract and present:\n"
-        f"company name, role title, city/state, salary (if shown), and an application link.{diff_section}\n\n"  # noqa: E501
-        f"LINK PRIORITY — LinkedIn and Indeed job URLs expire within days of the position being filled.\n"  # noqa: E501
-        f"Use this priority order for apply_url:\n"
-        f"  1. Company's own careers page (careers.company.com, company.com/careers) — most stable\n"  # noqa: E501
-        f"  2. Direct ATS link (greenhouse.io, lever.co, workday.com, icims.com) — stable\n"
-        f"  3. LinkedIn or Indeed URL — only if no stable link is available\n"
-        f"If only a LinkedIn/Indeed URL is found, still include it but note it may have expired.\n\n"  # noqa: E501
+        f"company name, role title, city/state, salary (if shown), and an application link."
+        f"{diff_section}\n\n"
+        f"LINK PRIORITY — LinkedIn and Indeed job URLs expire within days. Use this order:\n"
+        f"  1. Company careers page (careers.company.com) — most stable\n"
+        f"  2. Direct ATS link (greenhouse.io, lever.co, workday.com, icims.com)\n"
+        f"  3. LinkedIn or Indeed URL — only if no stable link is available\n\n"
         f"When no search results are available, share 2-3 known {location} ML/AI employers\n"
         f"actively hiring and link directly to their careers pages."
+        f"{resume_section}"
+        f"\n\n{scoring_rules}"
     )
 
 
 def build_search_queries() -> list[str]:
+    """Build Jina search queries — supplementary to structured API sources."""
     from core.config import get_settings
 
     s = get_settings()
@@ -207,7 +265,6 @@ def build_search_queries() -> list[str]:
     roles = s.career_target_roles
     today = datetime.date.today()
     return [
-        # Jina is a semantic search API — no site: or Google operators.
         f"{roles} jobs hiring Dallas Fort Worth Texas {today.year}",
         f"machine learning AI engineer positions {location} {today.year}",
     ]
@@ -223,7 +280,9 @@ class CareerState(TypedDict):
     history: list[dict[str, str]]
     is_morning_brief: bool
     # ── Intermediate ──────────────────────────────────────────────────────
-    search_results: str
+    search_results: str  # Formatted context from all sources (deduped)
+    new_job_count: int  # Count of new jobs found (before LLM structuring)
+    resume_context: str  # Skill profile extracted from PDF resumes
     # ── Outputs ───────────────────────────────────────────────────────────
     response: str
     model_used: str
@@ -236,39 +295,100 @@ class CareerState(TypedDict):
 
 
 async def _job_searcher(state: CareerState) -> dict[str, Any]:
-    """Search for live job listings via Jina — ATS-targeted and general queries in parallel."""
+    """Multi-source job fetcher with deduplication and resume intelligence.
+
+    Sources (all free):
+      - The Muse API — structured job listings, no auth
+      - Remotive API — remote ML/AI jobs, no auth
+      - Adzuna API   — comprehensive job DB, free 50 req/day (SE_ADZUNA_APP_ID/KEY)
+      - Jina search  — supplementary web search
+
+    Deduplication:
+      SQLite job store filters jobs seen in the last SE_CAREER_DEDUP_WINDOW_DAYS days.
+      Only new jobs are surfaced. Seen jobs are marked immediately.
+
+    Resume intelligence:
+      Parses PDFs from SE_CAREER_RESUME_PATH via pypdf — extracts skills for LLM injection.
+    """
+    from core.config import get_settings
     from core.types import RoutingDecision
 
     if state["routing"] != RoutingDecision.CLOUD:
-        return {"search_results": ""}
+        return {"search_results": "", "new_job_count": 0, "resume_context": ""}
+
+    s = get_settings()
+
     try:
-        from search.jina import search as jina_search
+        from search.job_store import JobStore
+        from search.jobs import fetch_all_sources, format_raw_listings
+        from search.resume_intel import build_resume_profile
 
+        # ── All sources run in parallel ────────────────────────────────────
         if state["is_morning_brief"]:
-            queries = build_search_queries()
+            jina_queries = build_search_queries()
         else:
-            from core.config import get_settings
-
-            s = get_settings()
-            location = s.career_target_location
             year = datetime.date.today().year
-            # Jina is a semantic search API — no site: or -word operators.
-            # Keep queries short and natural-language.
-            queries = [
+            jina_queries = [
                 f"ML Engineer AI jobs {state['query']} Dallas Fort Worth Texas {year}",
-                f"machine learning engineer jobs hiring {location} {year}",
+                f"machine learning engineer jobs hiring {s.career_target_location} {year}",
             ]
 
-        raw = await asyncio.gather(
-            *[jina_search(q, max_results=4) for q in queries],
+        from search.jina import search as jina_search
+
+        raw_listings_coro = fetch_all_sources(
+            adzuna_app_id=s.adzuna_app_id.get_secret_value(),
+            adzuna_app_key=s.adzuna_app_key.get_secret_value(),
+        )
+        resume_coro = asyncio.to_thread(build_resume_profile, s.career_resume_path)
+        jina_coros = [jina_search(q, max_results=5) for q in jina_queries]
+
+        gathered = await asyncio.gather(
+            raw_listings_coro,
+            resume_coro,
+            *jina_coros,
             return_exceptions=True,
         )
-        merged = "\n\n".join(r for r in raw if isinstance(r, str) and r)[:_MAX_SEARCH_CHARS]
-        logger.info("career_job_searcher queries=%d chars=%d", len(queries), len(merged))
-        return {"search_results": merged}
+
+        raw_listings = gathered[0] if isinstance(gathered[0], list) else []
+        resume_profile = gathered[1] if not isinstance(gathered[1], Exception) else None
+        jina_texts = [r for r in gathered[2:] if isinstance(r, str) and r]
+
+        # ── Deduplication ─────────────────────────────────────────────────
+        db_path = s.career_job_db_path if s.career_job_db_path else (s.ssd_root / "jobs.db")
+        store = JobStore(db_path)
+        new_listings = store.filter_new(raw_listings, dedup_window_days=s.career_dedup_window_days)
+        store.mark_seen(new_listings)
+
+        # ── Build combined context for LLM ─────────────────────────────────
+        parts: list[str] = []
+        if new_listings:
+            parts.append(format_raw_listings(new_listings))
+        jina_merged = "\n\n".join(jina_texts)
+        if jina_merged:
+            parts.append(f"Additional web search results:\n{jina_merged[:6_000]}")
+
+        search_results = "\n\n".join(parts)[:_MAX_SEARCH_CHARS]
+
+        resume_context = ""
+        if resume_profile is not None and not isinstance(resume_profile, Exception):
+            resume_context = resume_profile.to_context_string()
+
+        logger.info(
+            "career_job_searcher raw=%d new=%d jina_chars=%d resume_skills=%d",
+            len(raw_listings),
+            len(new_listings),
+            len(jina_merged),
+            len(resume_profile.all_skills_flat) if resume_profile else 0,
+        )
+        return {
+            "search_results": search_results,
+            "new_job_count": len(new_listings),
+            "resume_context": resume_context,
+        }
+
     except Exception:
         logger.warning("career_job_search_failed", exc_info=True)
-        return {"search_results": ""}
+        return {"search_results": "", "new_job_count": 0, "resume_context": ""}
 
 
 async def _check_url_live(url: str, client: httpx.AsyncClient) -> bool:
@@ -307,7 +427,7 @@ async def _validate_listings(listings: list[JobListing]) -> list[JobListing]:
 
 
 async def _strategist(state: CareerState) -> dict[str, Any]:
-    """Synthesize search results into career advice or a morning brief via LLM.
+    """Synthesize search results + resume profile into career advice via LLM.
 
     Attempts structured output (JobListingResponse) first for guaranteed format.
     Falls back to unstructured complete() if structured fails.
@@ -315,15 +435,20 @@ async def _strategist(state: CareerState) -> dict[str, Any]:
     from llm.gateway import get_gateway
 
     gateway = get_gateway()
-    system_prompt = build_system_prompt()
+    system_prompt = build_system_prompt(resume_context=state.get("resume_context", ""))
 
     if state["is_morning_brief"]:
-        user_content = (
-            f"Live DFW job market results:\n{state['search_results']}\n\n---\n{MORNING_PROMPT}"
-            if state["search_results"]
-            else MORNING_PROMPT
+        header = (
+            f"[{state.get('new_job_count', 0)} new positions found today]\n\n"
+            if state.get("new_job_count")
+            else ""
         )
-        max_tokens = 800
+        body = (
+            f"{header}Live DFW job market results:\n{state['search_results']}\n\n---\n"
+            f"{MORNING_PROMPT}"
+        )
+        user_content = body if state["search_results"] else MORNING_PROMPT
+        max_tokens = 900
     else:
         user_input = f"<user_request>\n{state['query']}\n</user_request>"
         user_content = (
@@ -352,7 +477,11 @@ async def _strategist(state: CareerState) -> dict[str, Any]:
         eligible = [j for j in structured.jobs if j.is_dfw_eligible]
         eligible = await _validate_listings(eligible)
         structured.jobs = eligible
-        logger.info("career_strategist_structured jobs=%d", len(eligible))
+        logger.info(
+            "career_strategist_structured jobs=%d skill_gap=%s",
+            len(eligible),
+            bool(structured.skill_gap),
+        )
         return {
             "response": format_job_listings(structured),
             "model_used": "structured",

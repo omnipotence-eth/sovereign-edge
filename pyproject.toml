@@ -16,6 +16,7 @@ members = [
 [tool.uv]
 dev-dependencies = [
     "pytest-cov>=6.0,<7.0",
+    "pytest-asyncio>=0.24,<1.0",
     "pre-commit>=4.0,<5.0",
 ]
 
