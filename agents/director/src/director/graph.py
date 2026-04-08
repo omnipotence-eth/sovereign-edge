@@ -80,8 +80,12 @@ RULES:
 1. Return a JSON object ONLY — no prose, no markdown fences.
 2. The "experts" list contains 1-3 expert names in execution order.
 3. The "rationale" is one sentence explaining why.
-4. Use multiple experts ONLY when the query clearly needs it.
-   Single-expert queries are the common case — do not over-engineer.
+4. Use multiple experts ONLY when the query clearly and explicitly needs both domains.
+   Single-expert queries are the overwhelming common case — do not over-engineer.
+5. NEVER chain intelligence into a career query unless the user explicitly asks to
+   "research companies" or "find companies working on X" before job searching.
+   A standalone job search query ("find me jobs", "what roles are hiring") routes to
+   career ONLY — never intelligence + career.
 
 OUTPUT FORMAT (strict JSON):
 {
@@ -97,14 +101,20 @@ EXAMPLES:
   Input: "What does Psalm 23 mean?"
   Output: {"experts": ["spiritual"], "rationale": "Pure scripture question.", "context_pass": false}
 
+  Input: "Find me ML engineer jobs in Dallas"
+  Output: {"experts": ["career"], "rationale": "Standalone job search.", "context_pass": false}
+
+  Input: "What jobs are hiring right now?"
+  Output: {"experts": ["career"], "rationale": "Job search — career only.", "context_pass": false}
+
   Input: "Research the latest GRPO papers and write a LinkedIn post about them"
   Output: {"experts": ["intelligence", "creative"],
            "rationale": "Research first, then draft the post using those findings.",
            "context_pass": true}
 
-  Input: "Find ML engineer jobs at companies building inference chips"
+  Input: "Research companies working on inference chips and find jobs there"
   Output: {"experts": ["intelligence", "career"],
-           "rationale": "Intelligence identifies target companies, career searches those.",
+           "rationale": "User explicitly asked to research companies first, then search jobs.",
            "context_pass": true}
 """
 
@@ -470,6 +480,8 @@ def _build_expert_state(
         base.update({"raw_papers": [], "ranked_papers": [], "repo_relevant_papers": []})
     elif expert_name == ExpertName.CAREER:
         base["search_results"] = ""
+        base["new_job_count"] = 0
+        base["resume_context"] = ""
     elif expert_name == ExpertName.SPIRITUAL:
         base["scripture"] = ""
     elif expert_name == ExpertName.CREATIVE:
