@@ -20,6 +20,7 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Startup warning when `SE_CAREER_RESUME_PATH` directory is missing.
 
 ### Fixed
+- `services/telegram/src/telegram_bot/bot.py`: `_sanitize_markdown()` markdown-to-HTML regexes could produce overlapping tags (`<b>...<i>...</b>...</i>`) when LLM output had mixed `*` and `_` formatting — caused Telegram `BadRequest: Can't parse entities`. Fixed regex character classes to exclude `<>` (prevents cross-tag matching) and added `_fix_html_nesting()` safety net that strips `<b>`/`<i>` tags when nesting is invalid.
 - `packages/observability/src/observability/logging.py`: stdlib `logging.getLogger()` calls (used by search, career, job_store modules) had no handlers — all INFO-level diagnostic logs were silently dropped. Added structlog-stdlib bridge via `ProcessorFormatter` so all modules output JSON to the same journalctl stream.
 - `agents/career/src/career/subgraph.py`: Job deduplication now only applies to morning briefs. On-demand queries ("find me ML jobs") show all available positions regardless of dedup state — fixes 0-result responses when all API results had been seen during prior testing.
 - `agents/career/src/career/subgraph.py`: Gemini `max_tokens` bumped from 900/1500 to 4096 — Gemini 2.5 Flash reasoning tokens (~1400) consumed the budget, leaving <100 tokens for `JobListingResponse` JSON. Caused `IncompleteOutputException` and fallback to unstructured path.

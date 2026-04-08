@@ -567,11 +567,12 @@ def _sanitize_markdown(text: str) -> str:
     )
 
     # **bold** or *bold* → <b>bold</b>
-    text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text, flags=re.DOTALL)
-    text = re.sub(r"\*([^*\n]+?)\*", r"<b>\1</b>", text)
+    # Exclude <> from match to prevent overlapping tags (e.g. <b>...<i>...</b>...</i>)
+    text = re.sub(r"\*\*([^*<>]+?)\*\*", r"<b>\1</b>", text)
+    text = re.sub(r"\*([^*\n<>]+?)\*", r"<b>\1</b>", text)
 
-    # _italic_ → <i>italic</i>
-    text = re.sub(r"_([^_\n]+?)_", r"<i>\1</i>", text)
+    # _italic_ → <i>italic</i>  (word-boundary guards prevent matching URL fragments)
+    text = re.sub(r"(?<![a-zA-Z])_([^_\n<>]+?)_(?![a-zA-Z])", r"<i>\1</i>", text)
 
     # Bold "Title: description" lines
     text = re.sub(
@@ -581,7 +582,45 @@ def _sanitize_markdown(text: str) -> str:
         flags=re.MULTILINE,
     )
 
+    # Safety net: strip <b>/<i> tags if nesting is invalid (prevents Telegram BadRequest)
+    text = _fix_html_nesting(text)
+
     return text.strip()
+
+
+def _fix_html_nesting(text: str) -> str:
+    """Validate <b>/<i> nesting; strip formatting tags if broken.
+
+    Telegram's HTML parser requires strict XHTML nesting — overlapping tags
+    like ``<b>...<i>...</b>...</i>`` cause BadRequest. This checks nesting
+    with a simple stack and strips all ``<b>``/``<i>`` tags if invalid.
+    Links (``<a>``) are preserved regardless.
+    """
+    import re
+
+    tag_re = re.compile(r"<(/?)([a-z]+)(?:\s[^>]*)?>")
+    stack: list[str] = []
+    for m in tag_re.finditer(text):
+        is_closing = bool(m.group(1))
+        tag = m.group(2)
+        if tag == "a":
+            if is_closing:
+                if stack and stack[-1] == "a":
+                    stack.pop()
+            else:
+                stack.append("a")
+            continue
+        if tag not in ("b", "i"):
+            continue
+        if is_closing:
+            if not stack or stack[-1] != tag:
+                return re.sub(r"</?[bi]>", "", text)
+            stack.pop()
+        else:
+            stack.append(tag)
+    if any(t in ("b", "i") for t in stack):
+        return re.sub(r"</?[bi]>", "", text)
+    return text
 
 
 def _split(text: str, size: int) -> list[str]:
