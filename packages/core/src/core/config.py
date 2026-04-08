@@ -100,7 +100,9 @@ class Settings(BaseSettings):
     # Career Expert — override to target a different location/role
     career_target_location: str = "Dallas Fort Worth TX"
     career_target_cities: str = "Dallas,Fort Worth,Plano,Irving,Frisco,Allen,McKinney,Richardson,Arlington,Southlake,Addison,Carrollton"  # noqa: E501
-    career_target_roles: str = "ML Engineer, AI Engineer, LLM Engineer"
+    career_target_roles: str = (
+        "ML Engineer, AI Engineer, Data Scientist, Data Engineer, Data Analyst, MLOps Engineer"  # noqa: E501
+    )
     career_differentiators: str = ""  # comma-separated; empty = generic coaching
 
     # Career Expert — job intelligence and resume matching

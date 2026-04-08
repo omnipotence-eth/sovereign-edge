@@ -28,6 +28,7 @@ _ML_TITLE_KEYWORDS: frozenset[str] = frozenset(
         "ai engineer",
         "llm",
         "data scientist",
+        "data analyst",
         "deep learning",
         "nlp",
         "mlops",
@@ -46,6 +47,9 @@ _ML_TITLE_KEYWORDS: frozenset[str] = frozenset(
         "analytics engineer",
         "solutions engineer",
         "software engineer",
+        "junior",
+        "associate",
+        "entry level",
     }
 )
 
@@ -203,38 +207,45 @@ async def fetch_all_sources(
     adzuna_app_id: str = "",
     adzuna_app_key: str = "",
 ) -> list[JobRawListing]:
-    """Fetch from all free job sources in parallel.
+    """Fetch from Adzuna (primary) + The Muse / Remotive (supplementary) in parallel.
 
     Returns a combined, unfiltered list.
     Deduplication is handled downstream by job_store.JobStore.filter_new().
+
+    Adzuna is the only source consistently returning ML/AI results.
+    The Muse and Remotive are kept as free supplementary sources but
+    typically return 0 for this niche. Adzuna free tier: 50 req/day.
     """
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         tasks: list = [
             _fetch_muse(client),
             _fetch_remotive(client, "machine learning"),
-            _fetch_remotive(client, "AI engineer"),
-            _fetch_remotive(client, "data scientist"),
         ]
         if adzuna_app_id and adzuna_app_key:
             logger.info("jobs_adzuna_enabled — adding Adzuna tasks")
+            # Queries tuned for junior/entry-level + mid-level ML/AI roles in DFW.
+            # Each call = 1 API request (50/day free). 8 queries x 2 calls/day = 16 RPD.
             tasks.extend(
                 [
+                    _fetch_adzuna(
+                        client, adzuna_app_id, adzuna_app_key, "junior data scientist", "dallas"
+                    ),
+                    _fetch_adzuna(
+                        client, adzuna_app_id, adzuna_app_key, "entry level machine learning"
+                    ),
+                    _fetch_adzuna(
+                        client, adzuna_app_id, adzuna_app_key, "data scientist", "dallas"
+                    ),
                     _fetch_adzuna(
                         client, adzuna_app_id, adzuna_app_key, "machine learning engineer"
                     ),
                     _fetch_adzuna(client, adzuna_app_id, adzuna_app_key, "AI engineer", "dallas"),
                     _fetch_adzuna(
-                        client, adzuna_app_id, adzuna_app_key, "data scientist", "dallas"
+                        client, adzuna_app_id, adzuna_app_key, "data analyst AI", "dallas"
                     ),
+                    _fetch_adzuna(client, adzuna_app_id, adzuna_app_key, "data engineer", "dallas"),
                     _fetch_adzuna(
                         client, adzuna_app_id, adzuna_app_key, "MLOps engineer", "dallas"
-                    ),
-                    _fetch_adzuna(
-                        client,
-                        adzuna_app_id,
-                        adzuna_app_key,
-                        "software engineer AI",
-                        "fort worth",
                     ),
                 ]
             )

@@ -227,8 +227,8 @@ Score each job 0.0-5.0 across four dimensions (weight in parentheses):
      or agentic systems? Exact title match = 5, adjacent = 3, stretch = 1.
   B. Skill alignment (30%): How well do the JD's required skills match the candidate
      profile above? Count matched skills as a fraction of required skills.
-  C. Level fit (20%): Mid/ML Engineer II/Senior = 5, Junior = 2, Principal/Staff = 3
-     (stretch). Roles requiring 5+ years where candidate has 2 = 2.5.
+  C. Level fit (20%): Junior/Entry/Associate = 5, Mid/ML Engineer II = 4.5, Senior = 3
+     (stretch — only if <5 years ML required). Principal/Staff = 1 (out of reach).
   D. Location (20%): DFW on-site or hybrid = 5, US remote = 4.5, other = 1.
 Final score = (A*0.30) + (B*0.30) + (C*0.20) + (D*0.20). Round to 1 decimal.
 Also write one sentence in score_rationale explaining the primary driver.
@@ -239,8 +239,9 @@ STRONG RECOMMENDATION: Only surface jobs with score ≥ 3.5. Flag 4.5+ as priori
         f"{_FORMAT_RULES}\n\n---\n\n"
         f"You are the Career Intelligence of Sovereign Edge — a world-class career strategist\n"
         f"specializing in {roles} roles.\n"
-        f"Include ALL experience levels — junior, mid, senior — not just senior roles.\n"
-        f"The candidate is career-pivoting and open to mid-level positions.\n\n"
+        f"PRIORITY: junior, entry-level, and associate roles. The candidate is pivoting from\n"
+        f"quality/manufacturing into ML engineering — first ML role is the goal.\n"
+        f"Mid-level roles are acceptable. Senior only if <5 years ML required.\n\n"
         f"TARGET AREA: {location}. Only include jobs in: {cities},\n"
         f"OR jobs explicitly marked remote/hybrid open to {location} candidates.\n"
         f"HARD RULE: Do not list jobs in other cities (NYC, SF, Seattle, etc.) unless remote.\n\n"
