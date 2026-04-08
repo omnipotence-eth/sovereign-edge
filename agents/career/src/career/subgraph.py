@@ -472,7 +472,7 @@ async def _strategist(state: CareerState) -> dict[str, Any]:
             f"{MORNING_PROMPT}"
         )
         user_content = body if state["search_results"] else MORNING_PROMPT
-        max_tokens = 900
+        max_tokens = 4096
     else:
         user_input = f"<user_request>\n{state['query']}\n</user_request>"
         user_content = (
@@ -480,7 +480,7 @@ async def _strategist(state: CareerState) -> dict[str, Any]:
             if state["search_results"]
             else user_input
         )
-        max_tokens = 1500
+        max_tokens = 4096
 
     messages: list[dict[str, str]] = [
         {"role": "system", "content": system_prompt},
