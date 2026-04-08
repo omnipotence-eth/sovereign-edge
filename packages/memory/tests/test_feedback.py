@@ -88,7 +88,7 @@ def test_neutral_messages_return_none(text: str) -> None:
 
 def test_message_at_max_length_is_scanned() -> None:
     """A message exactly _MAX_FEEDBACK_LEN chars that contains a signal is detected."""
-    text = ("thanks " + "x" * (_MAX_FEEDBACK_LEN - 7))
+    text = "thanks " + "x" * (_MAX_FEEDBACK_LEN - 7)
     assert len(text) == _MAX_FEEDBACK_LEN
     assert detect_feedback_signal(text) == "positive"
 

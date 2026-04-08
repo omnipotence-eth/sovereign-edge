@@ -31,8 +31,10 @@ def _patch_settings() -> None:  # type: ignore[return]
     mock_settings.logs_path = "/nonexistent"
     mock_settings.ssd_root = "/nonexistent"
 
-    with patch("health.auth.get_settings", return_value=mock_settings), \
-         patch("health.server.get_settings", return_value=mock_settings):
+    with (
+        patch("health.auth.get_settings", return_value=mock_settings),
+        patch("health.server.get_settings", return_value=mock_settings),
+    ):
         yield
 
 

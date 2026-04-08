@@ -215,9 +215,7 @@ class Orchestrator:
                         # Auto-extract skill pattern when quality is high
                         if reflection.score >= 4:
                             task = asyncio.create_task(
-                                self._extract_and_store_skill(
-                                    result.content, request.intent.value
-                                )
+                                self._extract_and_store_skill(result.content, request.intent.value)
                             )
                             self._bg_tasks.add(task)
                             task.add_done_callback(self._bg_tasks.discard)

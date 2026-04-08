@@ -61,3 +61,6 @@ Thumbs.db
 .mypy_cache/
 .pytest_cache/
 .ty_cache/
+
+# Unsloth compiled kernel cache — auto-generated, never commit
+unsloth_compiled_cache/

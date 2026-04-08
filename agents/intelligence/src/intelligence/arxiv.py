@@ -113,8 +113,7 @@ async def get_hf_daily_papers(limit: int = 10) -> list[Paper]:
             raw_authors = p.get("authors", [])
             if isinstance(raw_authors, list):
                 author_names = [
-                    (a.get("name", "") if isinstance(a, dict) else str(a))
-                    for a in raw_authors
+                    (a.get("name", "") if isinstance(a, dict) else str(a)) for a in raw_authors
                 ]
             else:
                 author_names = []

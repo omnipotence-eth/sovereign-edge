@@ -29,8 +29,8 @@ class Settings(BaseSettings):
 
     # Cloud API Keys (loaded from SOPS-decrypted env vars) — SecretStr prevents accidental logging
     groq_api_key: SecretStr = SecretStr("")
-    gemini_api_key: SecretStr = SecretStr("")   # SE_GEMINI_API_KEY
-    google_api_key: SecretStr = SecretStr("")   # legacy alias — prefer SE_GEMINI_API_KEY
+    gemini_api_key: SecretStr = SecretStr("")  # SE_GEMINI_API_KEY
+    google_api_key: SecretStr = SecretStr("")  # legacy alias — prefer SE_GEMINI_API_KEY
     cerebras_api_key: SecretStr = SecretStr("")
     mistral_api_key: SecretStr = SecretStr("")
     telegram_bot_token: SecretStr = SecretStr("")
@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     fmp_api_key: SecretStr = SecretStr("")  # Financial Modeling Prep — earnings transcripts
 
     # Observability and runtime
-    log_level: str = "INFO"   # DEBUG | INFO | WARNING | ERROR | CRITICAL
+    log_level: str = "INFO"  # DEBUG | INFO | WARNING | ERROR | CRITICAL
     mem0_user_id: str = "john"  # Mem0 episodic memory namespace
 
     # Router / classifier
@@ -111,7 +111,7 @@ class Settings(BaseSettings):
     # Don't resurface jobs seen within this many days
     career_dedup_window_days: int = 7
     # Adzuna free job API — sign up at developer.adzuna.com (50 req/day free)
-    adzuna_app_id: SecretStr = SecretStr("")   # SE_ADZUNA_APP_ID
+    adzuna_app_id: SecretStr = SecretStr("")  # SE_ADZUNA_APP_ID
     adzuna_app_key: SecretStr = SecretStr("")  # SE_ADZUNA_APP_KEY
 
     # Intelligence Expert — comma-separated repo topics for paper relevance scoring
@@ -132,7 +132,7 @@ class Settings(BaseSettings):
     whatsapp_enabled: bool = False
     twilio_account_sid: SecretStr = SecretStr("")
     twilio_auth_token: SecretStr = SecretStr("")
-    twilio_whatsapp_from: str = ""   # E.164 format, no "whatsapp:" prefix — e.g. "+14155238886"
+    twilio_whatsapp_from: str = ""  # E.164 format, no "whatsapp:" prefix — e.g. "+14155238886"
     whatsapp_owner_number: str = ""  # E.164 format, no "whatsapp:" prefix — e.g. "+12125551234"
 
     # MCP Tool Server

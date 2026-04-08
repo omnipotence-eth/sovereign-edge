@@ -113,7 +113,8 @@ class VectorStore:
         except Exception:
             # Fall back to pure semantic if FTS index doesn't exist
             logger.debug(
-                "hybrid_search_fts_unavailable table=%s falling_back=semantic", table_name,
+                "hybrid_search_fts_unavailable table=%s falling_back=semantic",
+                table_name,
                 exc_info=True,
             )
             return self.search(table_name, query, limit)

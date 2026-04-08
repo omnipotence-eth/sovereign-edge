@@ -108,9 +108,7 @@ def test_record_outcome_score_floor_at_0_1(lib: SkillLibrary) -> None:
         lib.record_outcome("floor_intent", success=False)
 
     conn = lib._get_conn()
-    score = conn.execute(
-        "SELECT score FROM skills WHERE intent='floor_intent'"
-    ).fetchone()[0]
+    score = conn.execute("SELECT score FROM skills WHERE intent='floor_intent'").fetchone()[0]
     assert score >= 0.1
 
 

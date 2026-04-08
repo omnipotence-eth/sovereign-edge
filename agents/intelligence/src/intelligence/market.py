@@ -32,8 +32,8 @@ _SHORT_MA_PERIOD = 5
 _LONG_MA_PERIOD = 20
 _MIN_REGIME_BARS = max(_LONG_MA_PERIOD, _ATR_PERIOD)  # need at least 20 bars
 
-_VOLATILE_ATR_THRESHOLD = 5.0   # ATR% above this → VOLATILE regime
-_TREND_THRESHOLD = 0.01         # ±1% short/long MA divergence → trending
+_VOLATILE_ATR_THRESHOLD = 5.0  # ATR% above this → VOLATILE regime
+_TREND_THRESHOLD = 0.01  # ±1% short/long MA divergence → trending
 
 
 # ── Data model ────────────────────────────────────────────────────────────────
@@ -49,14 +49,14 @@ class Quote:
     volume: int
     timestamp: str
     rsi: float = 50.0
-    bb_position: float = 0.0           # Bollinger Band position [-1, 1]
-    signal: str = "NEUTRAL"            # NEUTRAL | MEAN_REVERSION_BUY | MEAN_REVERSION_SELL
-                                       # | MOMENTUM_BUY | MOMENTUM_SELL
-    signal_confidence: float = 0.0     # 0.0 to 0.95
-    regime: str = "UNKNOWN"            # UNKNOWN | TRENDING_UP | TRENDING_DOWN
-                                       # | RANGING | VOLATILE
-    volume_ratio: float = 1.0          # current vs 20-day average
-    earnings_context: str = ""         # populated by earnings.enrich_quotes_with_earnings()
+    bb_position: float = 0.0  # Bollinger Band position [-1, 1]
+    signal: str = "NEUTRAL"  # NEUTRAL | MEAN_REVERSION_BUY | MEAN_REVERSION_SELL
+    # | MOMENTUM_BUY | MOMENTUM_SELL
+    signal_confidence: float = 0.0  # 0.0 to 0.95
+    regime: str = "UNKNOWN"  # UNKNOWN | TRENDING_UP | TRENDING_DOWN
+    # | RANGING | VOLATILE
+    volume_ratio: float = 1.0  # current vs 20-day average
+    earnings_context: str = ""  # populated by earnings.enrich_quotes_with_earnings()
     _indicator_data: dict = field(default_factory=dict, repr=False, compare=False)
 
 
@@ -105,9 +105,7 @@ def _compute_bb_position(closes: list[float]) -> float:
     return max(-1.0, min(1.0, round(pos, 4)))
 
 
-def _compute_atr_pct(
-    highs: list[float], lows: list[float], closes: list[float]
-) -> float:
+def _compute_atr_pct(highs: list[float], lows: list[float], closes: list[float]) -> float:
     """Average True Range as a percentage of the last close price.
 
     Returns 0.0 when fewer than 2 data points per series.
@@ -145,9 +143,7 @@ def _compute_volume_ratio(volumes: list[int]) -> float:
     return round(volumes[-1] / avg, 2)
 
 
-def _detect_regime(
-    closes: list[float], highs: list[float], lows: list[float]
-) -> str:
+def _detect_regime(closes: list[float], highs: list[float], lows: list[float]) -> str:
     """Classify the current market regime.
 
     Returns one of: UNKNOWN | VOLATILE | TRENDING_UP | TRENDING_DOWN | RANGING
@@ -308,10 +304,7 @@ async def get_watchlist_alerts() -> list[Quote]:
 
     threshold_pct = settings.market_alert_threshold * 100
     quotes = await get_quotes(list(settings.watchlist))
-    return [
-        q for q in quotes
-        if abs(q.change_pct) >= threshold_pct or q.signal != "NEUTRAL"
-    ]
+    return [q for q in quotes if abs(q.change_pct) >= threshold_pct or q.signal != "NEUTRAL"]
 
 
 # ── Formatting ────────────────────────────────────────────────────────────────

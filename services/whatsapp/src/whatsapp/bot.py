@@ -174,8 +174,7 @@ async def webhook(
     # ── 0. Content-Type guard ────────────────────────────────────────────────
     content_type = request.headers.get("content-type", "")
     _is_form = (
-        "application/x-www-form-urlencoded" in content_type
-        or "multipart/form-data" in content_type
+        "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type
     )
     if not _is_form:
         logger.warning("whatsapp_bad_content_type content_type=%r", content_type)

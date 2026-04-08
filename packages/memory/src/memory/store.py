@@ -37,7 +37,7 @@ class MemoryStore:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._mem0: Any = None   # set externally in tests; lazy-inited otherwise
+        self._mem0: Any = None  # set externally in tests; lazy-inited otherwise
         self._lance: Any = None  # set externally in tests; lazy-inited otherwise
 
     # ── Mem0 (episodic) ───────────────────────────────────────────────────────
