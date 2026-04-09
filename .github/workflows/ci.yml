@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
-      - run: uv sync --extra dev
+      - run: uv sync --all-packages
       - run: uv run ruff check src/ tests/
       - run: uv run ruff format --check src/ tests/
 
@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
-      - run: uv sync --extra dev
+      - run: uv sync --all-packages
       - run: uv run mypy --ignore-missing-imports src/
         continue-on-error: true
 
@@ -39,7 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
-      - run: uv sync --extra dev
+      - run: uv sync --all-packages
       - run: uv pip install pip-audit bandit
       - name: Audit dependencies for CVEs
         run: uv run pip-audit
@@ -58,7 +58,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: ${{ matrix.python-version }}
-      - run: uv sync --extra dev
+      - run: uv sync --all-packages
       - name: Run tests with coverage
         run: >
           uv run pytest tests/ -v --tb=short -x
