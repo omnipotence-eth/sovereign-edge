@@ -18,8 +18,8 @@ jobs:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
       - run: uv sync --all-packages
-      - run: uv run ruff check src/ tests/
-      - run: uv run ruff format --check src/ tests/
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
 
   type-check:
     name: Type Check
@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
       - run: uv sync --all-packages
-      - run: uv run mypy --ignore-missing-imports src/
+      - run: uv run mypy --ignore-missing-imports packages/ agents/ services/
         continue-on-error: true
 
   security:
@@ -44,7 +44,7 @@ jobs:
       - name: Audit dependencies for CVEs
         run: uv run pip-audit
       - name: Static security analysis
-        run: uv run bandit -r src/ -ll --quiet
+        run: uv run bandit -r packages/ agents/ services/ -ll --quiet
 
   test:
     name: Test (Python ${{ matrix.python-version }})
@@ -61,9 +61,14 @@ jobs:
       - run: uv sync --all-packages
       - name: Run tests with coverage
         run: >
-          uv run pytest tests/ -v --tb=short -x
-          --cov=src --cov-report=term-missing
+          uv run pytest -v --tb=short -x
+          --cov=packages --cov=agents --cov=services
+          --cov-report=term-missing
           --cov-fail-under=50
+          --ignore=evals
+          --ignore=agents/creative/tests
+          --ignore=agents/spiritual/tests
+          --ignore=packages/observability/tests
           --junitxml=test-results.xml
       - name: Upload test results
         if: always()
