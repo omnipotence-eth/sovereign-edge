@@ -26,7 +26,8 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `agents/orchestrator/src/orchestrator/main.py`: Daily 04:00 CT cron job runs both prune methods automatically.
 
 ### Changed
-- `.github/workflows/ci.yml`: Add `CVE-2026-40260` (pypdf) to pip-audit ignore list — pypdf 4.3.1→6.x is a major bump, deferred until migration.
+- `.github/workflows/ci.yml`: Add `CVE-2026-40260` (pypdf) and `CVE-2025-71176` (pytest) to pip-audit ignore list — both require major version bumps, deferred until migration.
+- `.github/workflows/ci.yml`: Install mypy explicitly in type-check job — not included in workspace dev deps.
 
 ### Security
 - `packages/search/src/search/jobs.py`: Redact API credentials from httpx error log output — Adzuna `app_id` and `app_key` were included in `HTTPStatusError` exception messages logged via `exc_info=True`. Added `_redact_url()` helper that strips sensitive query params before logging. Prevents credential leakage to journalctl.
