@@ -218,6 +218,117 @@ journalctl -u telegram-bot -f | python3 -m json.tool
 
 ---
 
+## Jetson Orin Nano Performance Tuning
+
+The Jetson Orin Nano (8GB) runs sovereign-edge with Ollama for local inference. These optimizations squeeze maximum performance from the hardware.
+
+### Power Mode & Clock Pinning
+
+The systemd service automatically sets MAXN mode and pins clocks on startup. To do it manually:
+
+```bash
+# MAXN power mode — 15W, all 6 cores + full GPU clocks (~20% faster)
+sudo nvpmodel -m 0
+
+# Pin clocks to maximum — prevents dynamic downclocking under load
+sudo jetson_clocks
+
+# Verify
+sudo nvpmodel -q        # should show "NV Power Mode: MAXN"
+jetson_clocks --show     # all clocks at max
+```
+
+### Memory Management
+
+The Orin Nano has 8GB shared between CPU and GPU. Every MB matters.
+
+```bash
+# Disable desktop GUI — saves ~1GB RAM
+sudo systemctl set-default multi-user.target
+sudo reboot
+
+# Add swap (prevents OOM on larger models)
+sudo fallocate -l 8G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+
+# Enable ZRAM for compressed swap (complementary to disk swap)
+sudo apt install zram-config
+sudo systemctl enable zram-config
+```
+
+### Model Optimization
+
+The default `qwen3:0.6b` underutilizes the hardware. Upgrade path:
+
+| Model | Quantization | VRAM | Tokens/sec (est.) | Quality |
+|-------|-------------|------|-------------------|---------|
+| qwen3:0.6b | FP16 | ~1.2GB | ~50 tok/s | Baseline |
+| qwen3:4b | Q4_K_M | ~3.0GB | ~25-35 tok/s | Much better |
+| qwen3:8b | Q4_K_M | ~5.5GB | ~12-18 tok/s | Best quality |
+| phi-4-mini | Q4_K_M | ~2.5GB | ~30-40 tok/s | Strong reasoning |
+
+```bash
+# Pull a larger quantized model — fits in 8GB with headroom
+ollama pull qwen3:4b
+
+# Or for maximum quality (tight fit, needs swap)
+ollama pull qwen3:8b
+```
+
+**TensorRT-LLM** (advanced — maximum throughput):
+
+```bash
+# INT4 weight-only via TensorRT-LLM (JetPack 6 / CUDA 12.2)
+pip install tensorrt-llm --extra-index-url https://pypi.nvidia.com
+trtllm-build --model_dir ./qwen3-4b --output_dir ./engine \
+    --gemm_plugin auto --weight_only_precision int4
+```
+
+### Monitoring
+
+```bash
+# Real-time Jetson stats (CPU, GPU, RAM, power, temperature)
+tegrastats --interval 1000
+
+# GPU memory specifically
+nvidia-smi
+
+# System memory
+free -h
+```
+
+### Benchmarking
+
+Run the built-in benchmark to compare models on your hardware:
+
+```bash
+# Benchmark default model (10 runs)
+python scripts/jetson_benchmark.py
+
+# Compare multiple models
+python scripts/jetson_benchmark.py --models qwen3:0.6b qwen3:4b --runs 15
+
+# Save results to JSON
+python scripts/jetson_benchmark.py --models qwen3:4b --output benchmark_results.json
+```
+
+The benchmark reports tokens/sec (mean ± std), latency percentiles (p50/p95/p99), and GPU memory usage.
+
+### Thermal Management
+
+Sustained inference heats the Orin Nano. Without active cooling, thermal throttling kicks in at ~85°C.
+
+- **Stock fan**: Adequate for light use, throttles under sustained load
+- **Noctua NF-A4x20 40mm**: ~$15, keeps temps under 65°C at full load
+- Mount with thermal tape or 3D-printed bracket on the heatsink
+
+Monitor temperature: `cat /sys/devices/virtual/thermal/thermal_zone*/temp`
+
+---
+
 ## ONNX Router Model (Optional)
 
 The Tier 2 ONNX DistilBERT classifier requires a fine-tuned model file. Without it, the router falls through to Tier 3 (keyword matching) automatically.

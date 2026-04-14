@@ -10,6 +10,9 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `scripts/jetson_benchmark.py`: Inference benchmark tool — measures tokens/sec, latency percentiles (p50/p95/p99), GPU memory usage across Ollama models. Supports multi-model comparison and JSON output.
+
+### Added
 - `packages/search/src/search/jobs.py`: multi-source job fetcher — The Muse (free, no auth), Remotive (free, no auth), Adzuna (free 50 RPD with SE_ADZUNA_APP_ID/KEY). All sources run in parallel via asyncio.gather. ML/AI title filtering built in.
 - `packages/search/src/search/job_store.py`: SQLite-backed job deduplication — SHA-1 keyed by (company, title), 7-day dedup window (configurable via SE_CAREER_DEDUP_WINDOW_DAYS). Tracks applied status. Prevents same jobs appearing in every morning brief.
 - `packages/search/src/search/resume_intel.py`: PDF resume intelligence — parses all PDFs from SE_CAREER_RESUME_PATH via pypdf, extracts 9-category skill taxonomy (llm_serving, training, agentic_frameworks, mlops, etc.), returns `ResumeProfile` with context string for LLM injection.
@@ -35,6 +38,8 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `agents/orchestrator/src/orchestrator/main.py`: Daily 04:00 CT cron job runs both prune methods automatically.
 
 ### Changed
+- `systemd/telegram-bot.service`: Auto-set MAXN power mode (`nvpmodel -m 0`) and pin clocks (`jetson_clocks`) on service start. Tighten memory limits to 1.5GB (`MemoryMax=1536M`, `MemoryHigh=1024M`) leaving headroom for Ollama on 8GB Jetson.
+- `docs/deployment.md`: Added comprehensive Jetson Orin Nano performance tuning section — power modes, memory management (swap/ZRAM/GUI disable), model optimization guide (FP16 → Q4_K_M → TensorRT), thermal management, and benchmarking instructions.
 - `.github/workflows/ci.yml`: Add `CVE-2026-40260` (pypdf) and `CVE-2025-71176` (pytest) to pip-audit ignore list — both require major version bumps, deferred until migration.
 - `.github/workflows/ci.yml`: Install mypy explicitly in type-check job — not included in workspace dev deps.
 

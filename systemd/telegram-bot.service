@@ -22,6 +22,12 @@ WorkingDirectory=<DEPLOY_ROOT>
 Environment=SOPS_AGE_KEY_FILE=<DEPLOY_ROOT>/../.config/sops/age/keys.txt
 EnvironmentFile=-<DEPLOY_ROOT>/secrets/.env.decrypted
 
+# ── Jetson Performance Tuning ────────────────────────────────────────────────
+# MAXN power mode (15W, all 6 cores + full GPU clocks) — ~20% faster inference
+ExecStartPre=-/usr/bin/nvpmodel -m 0
+# Pin clocks to maximum — prevents dynamic scaling under load
+ExecStartPre=-/usr/sbin/jetson_clocks
+
 # Decrypt secrets — set -euo pipefail so sops failure aborts before sed writes
 ExecStartPre=/bin/bash -c 'set -euo pipefail; \
     sops --decrypt <DEPLOY_ROOT>/secrets/env.yaml \
@@ -40,7 +46,9 @@ StandardError=journal
 SyslogIdentifier=sovereign-edge-telegram
 
 # Resource limits — tune to your hardware
-MemoryMax=2G
+# Jetson Orin Nano 8GB: keep bot under 1.5GB to leave headroom for Ollama
+MemoryMax=1536M
+MemoryHigh=1024M
 CPUQuota=80%
 
 # Security hardening
